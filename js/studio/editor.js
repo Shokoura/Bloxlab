@@ -91,6 +91,7 @@ export class CodeEditor {
     this.renderedErr = -1;
     this.render();
   }
+  setValue(v) { if (this.ta.value !== v) { this.ta.value = v; this.render(); } }
   gotoLine(n) {
     const lines = this.ta.value.split('\n');
     let pos = 0;

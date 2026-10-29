@@ -89,7 +89,7 @@ workspace.Terrain:FillBlock(CFrame.new(60, 4, 0), Vector3.new(20, 8, 20), Enum.M
     await page.waitForTimeout(800);
     const p0 = await hrp(page);
     ok(p0.y > 2 && p0.y < 6, 'character spawned on the spawn location', JSON.stringify(p0));
-    await page.mouse.click(300, 600);
+    await page.locator('.viewport-canvas').click({ position: { x: 200, y: 200 } });
     await page.keyboard.down('w'); await page.waitForTimeout(800); await page.keyboard.up('w');
     const p1 = await hrp(page);
     ok(Math.hypot(p1.x - p0.x, p1.z - p0.z) > 3, 'W walks', `${JSON.stringify(p0)} -> ${JSON.stringify(p1)}`);
@@ -221,7 +221,7 @@ local l = Instance.new("LocalScript") l.Source = [[task.wait(0.5) game.Replicate
     ok(players.split(',').length === 2, 'guest joined the host', players);
     ok(await host.page.evaluate(() => /42$/.test(window.bloxlab.session.server.world.dm.findFirstChildOfClass('Workspace').getAttribute('Pinged') || '')), 'guest RemoteEvent reached the host server');
     await guest.page.bringToFront();
-    await guest.page.mouse.click(300, 500);
+    await guest.page.locator('.viewport-canvas').click({ position: { x: 200, y: 200 } });
     const g0 = await hrp(guest.page);
     await guest.page.keyboard.down('w'); await guest.page.waitForTimeout(900); await guest.page.keyboard.up('w');
     await guest.page.waitForTimeout(500);

@@ -137,6 +137,7 @@ export class App {
       VIEW: [
         { group: 'Show', items: [b('v-explorer', 'Explorer', 'explorer', () => this.togglePanel('explorer')), b('v-props', 'Properties', 'properties', () => this.togglePanel('properties')), b('v-output', 'Output', 'output', () => this.togglePanel('output')), b('v-cmd', 'Command Bar', 'terminal', () => this.togglePanel('cmd')), b('v-toolbox', 'Toolbox', 'toolbox', () => this.togglePanel('toolbox')), b('v-console', 'Server Console', 'network', () => this.togglePanel('console'))] },
         { group: 'Camera', items: [b('focus', 'Focus', 'focus', () => this.viewport.focusSelection()), b('resetcam', 'Reset', 'camera', () => this.resetCamera())] },
+        { group: 'Scripts', items: [b('findall', 'Find All', 'search', () => import('./find.js').then((m) => m.findAllDialog(this)), { title: 'Find / replace in all scripts (Ctrl+Shift+F)' })] },
         { group: 'Assets', items: [b('assetmgr', 'Asset Manager', 'image', () => this.openAssetManager()), b('extload', 'External Load', 'cloud', () => this.openSettings('External Load'))] },
       ],
       PLUGINS: [
@@ -348,6 +349,7 @@ export class App {
       else if (ctrl && k.toLowerCase() === 'd') { e.preventDefault(); this.duplicate(); }
       else if (ctrl && k.toLowerCase() === 'g') { e.preventDefault(); this.group(); }
       else if (ctrl && k.toLowerCase() === 'u') { e.preventDefault(); this.ungroup(); }
+      else if (ctrl && e.shiftKey && k.toLowerCase() === 'f') { e.preventDefault(); import('./find.js').then((m) => m.findAllDialog(this)); }
       else if (ctrl && k.toLowerCase() === 's') { e.preventDefault(); this.saveToBrowser(); }
       else if (ctrl && k.toLowerCase() === 'o') { e.preventDefault(); this.openFile(); }
       else if (ctrl && k.toLowerCase() === 'i') { e.preventDefault(); this.insertObjectDialog(); }

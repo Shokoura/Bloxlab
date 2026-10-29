@@ -15,7 +15,8 @@ peer-to-peer. No build step, no server required. It also works as a [nenecookie]
 - **Studio**: Explorer, Properties (with attributes and tags), a Luau script editor with syntax highlighting,
   Output, Command Bar, Select / Move / Scale / Rotate gizmos with snapping, undo / redo, copy / paste /
   duplicate, group / ungroup, anchor / lock, part / UI / object insertion, effects, welds, terrain tools
-  (Generate, Brush, Clear), a Toolbox with starter models and a Roblox marketplace search, and StarterGui
+  (Generate, Brush, Clear), Find All / Replace All across scripts (Ctrl+Shift+F), a Toolbox with starter
+  models and a Roblox marketplace search, and StarterGui
   previews while editing.
 - **Luau**: a Luau-to-JavaScript compiler and runtime (types, compound assignment, `continue`,
   string interpolation, generalized iteration, `buffer`, `task`, coroutines, metatables …) with the
