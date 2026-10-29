@@ -1,0 +1,7 @@
+{
+  "name": "Bloxlab Studio",
+  "description": "Build, script and play Roblox-style games in your browser. Open .rbxl / .rbxm files, edit with Studio tools, write Luau, load Roblox assets through External Load and play together peer-to-peer.",
+  "accent": "#6d5cf6",
+  "order": 20,
+  "saves": true
+}

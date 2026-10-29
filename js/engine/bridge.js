@@ -701,3 +701,15 @@ export function fontFromEnum(e) {
 }
 
 export { FONT_WEIGHTS, datatypeName, Signal, call, runSync, EMPTY, mkgen, R, LuaTable, LuaError, Instance };
+
+/** Generator: suspends the calling Lua thread until `promise` settles. Throws a LuaError on rejection. */
+export function* awaitPromise(promise, what = 'request') {
+  const world = R.current && R.current.owner && R.current.owner.world;
+  if (!world) throw lerr(`${what} can only be used from a running script`);
+  const ERR = {};
+  const r = yield* world.scheduler.waitFor((wake) => {
+    promise.then((v) => wake([v]), (e) => wake([ERR, e]));
+  });
+  if (r[0] === ERR) { const e = r[1]; throw lerr(e instanceof LuaError ? e.value : (e && e.message) || String(e)); }
+  return r[0];
+}

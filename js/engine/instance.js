@@ -91,6 +91,8 @@ export class Instance {
     if (acc && acc.set && !(opts && opts.raw)) { acc.set(this, value, opts); return; }
     const old = this.props[name];
     if (sameValue(old, value)) return;
+    const rec = this.dm && this.dm.world && this.dm.world.recorder;
+    if (rec) rec.prop(this, name, old);
     this.props[name] = value;
     this.changed(name, opts);
   }
@@ -98,6 +100,8 @@ export class Instance {
   rawSet(name, value, opts) {
     const old = this.props[name];
     if (sameValue(old, value)) return false;
+    const rec = this.dm && this.dm.world && this.dm.world.recorder;
+    if (rec) rec.prop(this, name, old);
     this.props[name] = value;
     this.changed(name, opts);
     return true;
@@ -149,6 +153,8 @@ export class Instance {
     if (p && p.destroyed && p.parentLocked) throw new Error(`The Parent property of ${this.props.Name} is locked`);
     const old = this.parent;
     const oldDm = this.dm;
+    const rec = (oldDm && oldDm.world && oldDm.world.recorder) || (p && p.dm && p.dm.world && p.dm.world.recorder);
+    if (rec) rec.parent(this, old, old ? old.children.indexOf(this) : -1);
     if (old) {
       for (let a = old; a; a = a.parent) a.fire('DescendantRemoving', this);
       const i = old.children.indexOf(this);
@@ -249,6 +255,8 @@ export class Instance {
     if (!this.attrs) this.attrs = new Map();
     const old = this.attrs.get(name);
     if (sameValue(old, v)) return;
+    const rec = this.dm && this.dm.world && this.dm.world.recorder;
+    if (rec) rec.attr(this, name, old);
     if (v === undefined || v === null) this.attrs.delete(name); else this.attrs.set(name, v);
     const w = this.dm && this.dm.world;
     if (w) w.attrChanged(this, name);

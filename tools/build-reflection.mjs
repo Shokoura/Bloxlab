@@ -107,19 +107,25 @@ const CF = { NOTCREATABLE: 1, SERVICE: 2, NOTBROWSABLE: 4, DEPRECATED: 8, NOTREP
 
 // events + functions from the API dump
 const members = {};
+const categories = [];
+const catIndex = new Map();
 for (const c of dump.Classes) {
-  const ev = [], fn = [], cb = [];
+  const ev = [], fn = [], cb = [], cat = {};
   for (const m of c.Members) {
+    if (m.MemberType === 'Property' && m.Category) {
+      if (!catIndex.has(m.Category)) { catIndex.set(m.Category, categories.length); categories.push(m.Category); }
+      cat[m.Name] = catIndex.get(m.Category);
+    }
     const tags = m.Tags || [];
     if (tags.includes('Hidden') && tags.includes('NotScriptable')) continue;
     if (m.MemberType === 'Event') ev.push(m.Name);
     else if (m.MemberType === 'Function') fn.push(m.Name);
     else if (m.MemberType === 'Callback') cb.push(m.Name);
   }
-  members[c.Name] = { ev, fn, cb, tags: c.Tags || [], mem: c.MemoryCategory };
+  members[c.Name] = { ev, fn, cb, cat, tags: c.Tags || [], mem: c.MemoryCategory };
 }
 
-const out = { classes: {}, enums: {} };
+const out = { classes: {}, enums: {}, categories };
 for (const [name, c] of Object.entries(classes)) {
   const [, ctags, superclass, props, defaults] = c;
   let cf = 0;
@@ -156,6 +162,7 @@ for (const [name, c] of Object.entries(classes)) {
   if (m.ev.length) entry.e = m.ev;
   if (m.fn.length) entry.m = m.fn;
   if (m.cb.length) entry.cb = m.cb;
+  if (m.cat && Object.keys(m.cat).length) entry.c = m.cat;
   out.classes[name] = entry;
 }
 for (const [name, e] of Object.entries(enums)) {

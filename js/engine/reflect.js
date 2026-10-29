@@ -73,3 +73,11 @@ export function serialName(className, prop) {
   if (p.flags & F.SERIALIZES) return p.extra || prop;
   return null;
 }
+
+/** Studio property category (from the API dump), e.g. "Appearance", "Transform". */
+export function propCategory(className, prop) {
+  for (let c = classes[className]; c; c = classes[c.s]) {
+    if (c.c && c.c[prop] !== undefined) return reflection.categories[c.c[prop]];
+  }
+  return 'Data';
+}
