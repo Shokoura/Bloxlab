@@ -53,6 +53,9 @@ export function newEmptyPlace(world) {
   const dm = createDataModel(world);
   for (const s of DEFAULT_SERVICES) dm.serviceFactory(s);
   ensureServiceChildren(dm);
+  // Studio's place templates use JumpHeight rather than the legacy JumpPower
+  const sp = dm.findFirstChildOfClass('StarterPlayer');
+  sp.props.CharacterUseJumpPower = false;
   return dm;
 }
 

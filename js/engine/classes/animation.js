@@ -139,6 +139,7 @@ defineBehavior('AnimationTrack', {
       self.playing = true;
       self.stopping = false;
       self.animator.fire('AnimationPlayed', self);
+      self.world?.hooks.trackEvent?.(self, 'play');
       const hum = self.animator.parent;
       if (hum && hum.ClassName === 'Humanoid') hum.fire('AnimationPlayed', self);
     },
@@ -147,9 +148,10 @@ defineBehavior('AnimationTrack', {
       self.fade = typeof fade === 'number' ? fade : 0.1;
       self.stopping = true;
       self.targetWeight = 0;
+      self.world?.hooks.trackEvent?.(self, 'stop');
       if (self.fade <= 0) finishStop(self);
     },
-    AdjustSpeed: (self, s) => { self.speed = typeof s === 'number' ? s : 1; },
+    AdjustSpeed: (self, s) => { self.speed = typeof s === 'number' ? s : 1; self.world?.hooks.trackEvent?.(self, 'speed'); },
     AdjustWeight: (self, w, fade) => { self.targetWeight = typeof w === 'number' ? w : 1; self.fade = typeof fade === 'number' ? fade : 0.1; },
     GetMarkerReachedSignal: (self, name) => {
       const n = S(name);

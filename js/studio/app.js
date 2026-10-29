@@ -312,12 +312,12 @@ export class App {
     document.addEventListener('keydown', (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
-      if (this.session && this.session.capturesKeys && e.target === this.viewport.canvas) return;
       const ctrl = e.ctrlKey || e.metaKey;
       const k = e.key;
       if (k === 'F5' && e.shiftKey) { e.preventDefault(); this.stopPlay(); return; }
       if (k === 'F5') { e.preventDefault(); if (!this.session) this.play('play'); return; }
       if (k === 'F8') { e.preventDefault(); if (!this.session) this.play('run'); return; }
+      if (this.session && this.session.capturesKeys && (e.target === this.viewport.canvas || e.target === document.body)) return;
       if (this.session) return;
       if (ctrl && k.toLowerCase() === 'z') { e.preventDefault(); const n = this.history.undo(); if (n) toast(`Undo ${n}`); }
       else if (ctrl && (k.toLowerCase() === 'y' || (e.shiftKey && k.toLowerCase() === 'z'))) { e.preventDefault(); const n = this.history.redo(); if (n) toast(`Redo ${n}`); }

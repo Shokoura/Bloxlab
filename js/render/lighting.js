@@ -100,9 +100,9 @@ export class LightingView {
     const moon = (1 - day) * 0.15;
     this.hemi.color.copy(srgb(outdoor)).multiplyScalar(1.1).lerp(new THREE.Color(0.55, 0.65, 0.9), 0.35);
     this.hemi.groundColor.copy(srgb(outdoor)).multiplyScalar(0.6);
-    this.hemi.intensity = 0.6 + day * 0.9 + moon;
+    this.hemi.intensity = 0.85 + day * 1.0 + moon;
     this.ambient.color.copy(srgb(amb));
-    this.ambient.intensity = 0.6;
+    this.ambient.intensity = 0.9;
     this.exposure = Math.pow(2, P.ExposureCompensation || 0);
     // sky colors
     const dayTop = new THREE.Color(0x3d8be0), dayHor = new THREE.Color(0xc4e2ff);

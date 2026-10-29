@@ -152,6 +152,7 @@ export class CharacterController {
     // facing direction
     let yaw = this.yaw ?? Math.atan2(-rootCF.LookVector.X, -rootCF.LookVector.Z);
     if (this.forcedYaw !== undefined) { yaw = this.forcedYaw; this.forcedYaw = undefined; }
+    else if (this.faceYaw !== null && this.faceYaw !== undefined && hum.props.AutoRotate !== false) yaw = this.faceYaw; // shift lock / first person
     else if (hum.props.AutoRotate !== false && dir.Magnitude > 0.05) {
       const target = Math.atan2(-dir.X, -dir.Z);
       let d = target - yaw;

@@ -316,6 +316,8 @@ export class Physics {
     asm.rootCF = rootCF;
     if (hum && hum.controller) { asm.kind = 'kinematic'; asm.character = hum.controller; }
     if (this.remoteOwnedModels && this.remoteOwnedModels.has(root.parent)) asm.kind = 'kinematic';
+    // on clients, replicated assemblies follow the server's poses (except our own character)
+    if (this.role === 'client' && asm.kind === 'dynamic' && !asm.character && parts.some((p) => p.netId !== undefined)) asm.kind = 'kinematic';
     const desc = asm.kind === 'fixed' ? RAPIER.RigidBodyDesc.fixed() : asm.kind === 'kinematic' ? RAPIER.RigidBodyDesc.kinematicPositionBased() : RAPIER.RigidBodyDesc.dynamic();
     desc.setTranslation(rootCF.X, rootCF.Y, rootCF.Z).setRotation(quat(rootCF));
     if (asm.kind === 'dynamic') {

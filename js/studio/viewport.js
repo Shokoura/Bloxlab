@@ -335,6 +335,9 @@ export class Viewport {
     this.renderer.render(v.scene, this.camera);
   }
 
+  /** Point the lighting / shadow camera follows in play mode. */
+  setFocus(x, y, z) { (this.focus ||= new THREE.Vector3()).set(x, y, z); }
+
   /** Workspace camera CFrame for play mode. */
   setCameraCFrame(cf, fov) {
     const m = cframeToMatrix(cf);

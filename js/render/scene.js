@@ -195,7 +195,7 @@ export class SceneView {
       case 'Sphere': geom = sphereGeometry(sx, sy, sz); break;
       case 'Cylinder': geom = cylinderGeometry(sx, sy, sz, 4, 'y'); break;
       case 'Wedge': geom = wedgeGeometry(sx, sy, sz); break;
-      case 'Head': geom = headGeometry(sx, sy, sz); break;
+      case 'Head': { const d = Math.min(size.X, size.Z); geom = headGeometry(d * scale.X, sy, d * scale.Z); break; }
       case 'FileMesh': fitPart = false; break;
       default: geom = boxGeometry(sx, sy, sz); break;
     }
@@ -271,7 +271,17 @@ export class SceneView {
     const dir = FACE_DIR[face];
     const dims = [[size.Z, size.Y], [size.X, size.Z], [size.X, size.Y], [size.Z, size.Y], [size.X, size.Z], [size.X, size.Y]][face];
     const half = [size.X / 2, size.Y / 2, size.Z / 2];
-    const geom = new THREE.PlaneGeometry(dims[0], dims[1]);
+    let geom = new THREE.PlaneGeometry(dims[0], dims[1]);
+    // decals on the classic round head wrap around its front instead of floating inside it
+    const sm = part.findFirstChildOfClass('SpecialMesh');
+    const head = sm && sm.props.MeshType && sm.props.MeshType.Name === 'Head' && face !== 1 && face !== 4;
+    if (head) {
+      const sc = sm.props.Scale || new Vector3(1, 1, 1);
+      const r = (Math.min(size.X, size.Z) * sc.X) / 2 + 0.012;
+      const hgt = size.Y * sc.Y * 0.82;
+      const yaw = { 0: Math.PI / 2, 2: 0, 3: -Math.PI / 2, 5: Math.PI }[face];
+      geom = new THREE.CylinderGeometry(r, r, hgt, 24, 1, true, yaw - Math.PI * 0.42, Math.PI * 0.84);
+    }
     let tr = P.Transparency || 0;
     tr = tr + (1 - tr) * ltm;
     const mat = new THREE.MeshStandardMaterial({ color: srgb(P.Color3 || new Color3(1, 1, 1)), transparent: true, opacity: 1 - tr, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, roughness: 0.9 });
@@ -280,11 +290,12 @@ export class SceneView {
     m.userData.ownGeometry = true; m.userData.ownMaterial = true;
     m.userData.inst = part;
     m.receiveShadow = true;
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
-    if (face === 1) q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0));
-    m.quaternion.copy(q);
-    if (face === 4) m.rotateZ(Math.PI);
-    m.position.set(dir.x * (half[0] + 0.01), dir.y * (half[1] + 0.01), dir.z * (half[2] + 0.01));
+    if (!head) {
+      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+      m.quaternion.copy(q);
+      if (face === 4) m.rotateZ(Math.PI);
+      m.position.set(dir.x * (half[0] + 0.01), dir.y * (half[1] + 0.01), dir.z * (half[2] + 0.01));
+    } else { const off = sm.props.Offset; if (off) m.position.set(off.X, off.Y, off.Z); }
     obj.add(m);
     if (this.assets && P.Texture) {
       this.assets.texture(P.Texture).then((t) => {

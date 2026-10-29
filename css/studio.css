@@ -239,12 +239,55 @@ select.pinput { background: var(--panel); }
 .studio.playing .ribbon { box-shadow: inset 0 -2px 0 var(--green); }
 .game-ui { position: absolute; inset: 0; pointer-events: none; overflow: hidden; font-family: "Builder Sans", "Montserrat", var(--ui); }
 .game-ui * { box-sizing: border-box; }
-.gui-node { position: absolute; pointer-events: auto; overflow: visible; }
-.gui-node.passthrough { pointer-events: none; }
-.gui-text { white-space: pre-wrap; display: flex; width: 100%; height: 100%; overflow: hidden; line-height: 1.12; }
-.gui-node.clip { overflow: hidden; }
-.gui-node > .gui-img { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; image-rendering: auto; }
-.gui-box { position: absolute; inset: 0; border: 0 solid; background: transparent; padding: 0; margin: 0; resize: none; outline: none; }
+.gui-layer { position: absolute; pointer-events: none; }
+.gui { position: absolute; display: flex; margin: 0; border: 0; padding: 0; color: inherit; background: none; overflow: visible; }
+.gui > .gui-text { max-width: 100%; max-height: 100%; overflow-wrap: anywhere; pointer-events: none; }
+.gui.ImageLabel::before, .gui.ImageButton::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background-image: var(--img, none); background-size: var(--img-size, 100% 100%); background-position: var(--img-pos, 0 0); background-repeat: var(--img-rep, no-repeat);
+  background-color: var(--img-tint, transparent); background-blend-mode: multiply; opacity: var(--img-op, 1);
+  -webkit-mask-image: var(--img, none); -webkit-mask-size: var(--img-size, 100% 100%); -webkit-mask-position: var(--img-pos, 0 0); -webkit-mask-repeat: var(--img-rep, no-repeat);
+  mask-image: var(--img, none); mask-size: var(--img-size, 100% 100%); mask-position: var(--img-pos, 0 0); mask-repeat: var(--img-rep, no-repeat);
+}
+.gui.TextBox { outline: none; resize: none; box-shadow: none; display: block; }
+.gui.TextBox::placeholder { color: var(--ph, #aaa); }
+.gui.auto-color { cursor: pointer; }
+.gui.auto-color:hover { filter: brightness(.9); }
+.gui.auto-color.pressed { filter: brightness(.75); }
+.gui-canvas { position: absolute; left: 0; top: 0; }
+.gui.ScrollingFrame::-webkit-scrollbar { width: var(--sb, 12px); height: var(--sb, 12px); }
+.gui.ScrollingFrame::-webkit-scrollbar-thumb { background: var(--sb-color, rgba(0, 0, 0, .5)); border-radius: 0; }
+.gui.ScrollingFrame { scrollbar-width: thin; }
+.game-ui.edit { opacity: .96; }
+.game-hud { font-family: var(--ui); color: #fff; }
+.game-hud button { font-family: var(--ui); }
+.hud-3d { position: absolute; inset: 0; pointer-events: none; }
+.game-chat.faded .log { opacity: 0; transition: opacity 1.2s; }
+.game-chat .log .sys { color: #cdd6e4; font-style: italic; }
+.player-list { position: absolute; right: 10px; top: 8px; background: rgba(20, 22, 28, .55); border-radius: 10px; padding: 6px 8px; pointer-events: auto; max-height: 50%; overflow: auto; min-width: 160px; font-size: 13px; z-index: 40; }
+.player-list table { border-collapse: collapse; width: 100%; }
+.player-list th { font-size: 11px; color: #c4cad6; font-weight: 600; text-align: left; padding: 2px 6px; }
+.player-list td { padding: 3px 6px; white-space: nowrap; }
+.player-list td.v { text-align: right; font-variant-numeric: tabular-nums; }
+.player-list tr.me td:first-child { font-weight: 700; }
+.player-list tr.team td { font-weight: 700; color: #fff; text-shadow: 0 1px 2px #000; border-radius: 4px; }
+.health-bar { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); width: 200px; height: 8px; background: rgba(0, 0, 0, .45); border-radius: 4px; overflow: hidden; z-index: 40; }
+.health-bar i { display: block; height: 100%; width: 100%; background: #3ddc5c; transition: width .2s; }
+.notes { position: absolute; right: 12px; bottom: 90px; display: flex; flex-direction: column; gap: 8px; z-index: 55; pointer-events: auto; }
+.note { background: rgba(20, 22, 28, .85); border-radius: 10px; padding: 10px 14px; width: 260px; font-size: 13px; display: grid; gap: 4px; }
+.note-btn { background: rgba(255, 255, 255, .15); border: 0; color: #fff; border-radius: 6px; padding: 5px; cursor: pointer; }
+.game-menu { display: grid; gap: 8px; min-width: 260px; }
+.game-menu h3, .dialog-game h3 { margin: 0 0 4px; }
+.menu-btn { background: rgba(255, 255, 255, .12); border: 0; color: #fff; border-radius: 8px; padding: 9px 12px; cursor: pointer; font-weight: 600; }
+.menu-btn:hover { background: rgba(255, 255, 255, .2); }
+.menu-btn.primary { background: #3d9bff; }
+.menu-btn.danger { background: #c9413a; }
+.menu-row { display: flex; align-items: center; gap: 8px; font-size: 13px; text-align: left; }
+.dialog-game .row { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+.dialog-game .muted { color: #b8c0cc; font-size: 12px; }
+.game-hud.dead::after { content: ''; position: absolute; inset: 0; background: radial-gradient(transparent 45%, rgba(110, 0, 0, .35)); pointer-events: none; }
+.touch-act { position: absolute; width: 56px; height: 56px; border-radius: 50%; background: rgba(255, 255, 255, .18); border: 2px solid rgba(255, 255, 255, .35); color: #fff; font-size: 11px; pointer-events: auto; touch-action: none; }
+.hotbar .slot .label { font-size: 11px; line-height: 1.1; word-break: break-word; }
 .topbar-game { position: absolute; left: 12px; top: 8px; display: flex; gap: 8px; pointer-events: auto; z-index: 50; }
 .topbar-game button { width: 40px; height: 40px; border-radius: 12px; border: 0; background: rgba(18, 21, 26, .6); color: #fff; display: grid; place-items: center; cursor: pointer; backdrop-filter: blur(6px); }
 .topbar-game button:hover { background: rgba(30, 34, 42, .8); }
