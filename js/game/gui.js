@@ -158,6 +158,9 @@ export class GuiRenderer {
     this.world = owner.world;
     this.app = owner.app;
     this.edit = !!opts.edit;
+    this.widget = !!opts.widget; // plugin widget: interactive, own roots and size, no world hooks
+    this.rootsFn = opts.roots || null;
+    this.sizeFn = opts.size || null;
     this.root = document.createElement('div');
     this.root.className = `game-ui${this.edit ? ' edit' : ''}`;
     container.append(this.root);
@@ -172,7 +175,7 @@ export class GuiRenderer {
       attrChanged: () => {},
     });
     const h = this.world.hooks;
-    if (!this.edit) {
+    if (!this.edit && !this.widget) {
       h.guiObjectsAt = (x, y) => this.objectsAt(x, y);
       h.focusTextBox = (tb, on, submitted) => this.focusBox(tb, on, submitted);
       this.onMove = (e) => this.hoverAt(e);
@@ -194,6 +197,7 @@ export class GuiRenderer {
   }
 
   roots() {
+    if (this.rootsFn) return this.rootsFn();
     const w = this.world;
     const out = [];
     if (this.edit) {
@@ -208,6 +212,7 @@ export class GuiRenderer {
   }
   worldGuis() {
     const out = [];
+    if (this.widget) return out;
     const w = this.world;
     const scan = (root) => root && root.forTree((d) => { if (d.ClassName === 'BillboardGui' || d.ClassName === 'SurfaceGui') out.push(d); });
     scan(w.dm.findFirstChildOfClass('Workspace'));
@@ -224,11 +229,12 @@ export class GuiRenderer {
     if (!this.dirty && !this.hasWorldGuis) return;
     this.dirty = false;
     const vp = this.owner.viewport || this.app.viewport;
-    const W = vp.size.w, H = vp.size.h;
+    const sz = this.sizeFn ? this.sizeFn() : vp.size;
+    const W = sz.w, H = sz.h;
     this.seen = new Set();
     const roots = this.roots().filter((g) => g.props.Enabled !== false).sort((a, b) => (a.props.DisplayOrder || 0) - (b.props.DisplayOrder || 0));
     roots.forEach((g, idx) => {
-      const ignore = g.props.IgnoreGuiInset === true || enumName(g.props.ScreenInsets, '') === 'None';
+      const ignore = this.widget || g.props.IgnoreGuiInset === true || enumName(g.props.ScreenInsets, '') === 'None';
       const rect = ignore ? { x: 0, y: 0, w: W, h: H } : { x: 0, y: INSET, w: W, h: H - INSET };
       const node = this.layer(g, this.root);
       node.el.style.zIndex = String(10 + idx);

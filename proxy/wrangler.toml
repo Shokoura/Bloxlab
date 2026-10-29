@@ -1,0 +1,10 @@
+# Cloudflare Worker for Bloxlab's External Load.  Deploy:  npx wrangler deploy
+# then add a secret:  npx wrangler secret put ROBLOX_API_KEY
+name = "bloxlab-proxy"
+main = "worker.mjs"
+compatibility_date = "2024-09-01"
+
+[vars]
+# Restrict which sites may use your proxy (comma separated). Empty = anyone.
+ALLOWED_ORIGINS = ""
+CACHE_SECONDS = "86400"

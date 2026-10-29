@@ -375,3 +375,13 @@ html.in-nene .brand b { display: none; }
 .asset-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; background: var(--panel2); border-radius: 6px; }
 .asset-row .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 640px) { .settings { grid-template-columns: 1fr; } .settings-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 6px; } }
+
+/* plugin windows */
+.plugin-widget { position: fixed; right: 24px; top: 120px; z-index: 800; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; box-shadow: 0 16px 40px rgba(0, 0, 0, .45); display: flex; flex-direction: column; min-width: 180px; min-height: 120px; resize: both; overflow: hidden; }
+.plugin-widget-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; background: var(--panel2); border-bottom: 1px solid var(--line); cursor: move; user-select: none; }
+.plugin-widget-body { position: relative; flex: 1; overflow: hidden; }
+.plugin-frame { border: 0; width: 100%; height: 100%; display: block; background: var(--panel); }
+.toolbox .tb-tabs { padding: 6px 6px 0; }
+.toolbox .hrow { padding: 0 6px; }
+.toolbox .hrow .input { flex: 1; width: auto; }
+.tb-thumb { width: 52px; height: 52px; object-fit: contain; border-radius: 6px; background: var(--panel3); }

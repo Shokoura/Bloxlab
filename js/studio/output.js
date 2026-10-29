@@ -37,7 +37,7 @@ export class Output {
     return !q || e.msg.toLowerCase().includes(q);
   }
   row(e) {
-    const t = new Date(e.time);
+    const t = new Date(e.time || Date.now());
     const ts = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}.${String(t.getMilliseconds()).padStart(3, '0')}`;
     const msg = h('span', { class: 'msg', text: e.msg });
     const r = h('div', { class: `out-row k-${e.kind}` }, h('span', { class: 'ts', text: ts }),

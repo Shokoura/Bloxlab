@@ -50,6 +50,7 @@ export class App {
     this.selection.onChange(() => { this.viewport.refreshSelection(); this.updateRibbonState(); if (this.pickCallback) { const cb = this.pickCallback; this.pickCallback = null; cb(this.selection.first()); } });
     this.bindKeys();
     this.setPlace(newBaseplate(this.makeEditWorld()), 'Place1');
+    setTimeout(() => this.ensurePlugins().then(() => this.buildRibbon()).catch((e) => console.warn('[plugins]', e)), 300);
     this.loop();
     this.autosave = debounce(() => this.saveToBrowser(true), 4000);
     setInterval(() => { if (this.project.dirty && this.settings.get('autosave') && !this.session) this.saveToBrowser(true); }, 60000);
@@ -827,9 +828,14 @@ export class App {
   async openAssetManager() { (await import('./settings-ui.js')).openAssetManager(this); }
   async pluginsDialog() { await this.ensurePlugins(); this.pluginHost.manageDialog(); }
   async installPluginDialog() { await this.ensurePlugins(); this.pluginHost.installDialog(); }
-  async ensurePlugins() {
-    if (!this.pluginHost) { const { PluginHost } = await import('../plugins/host.js'); this.pluginHost = new PluginHost(this); await this.pluginHost.loadInstalled(); }
-    return this.pluginHost;
+  ensurePlugins() {
+    this.pluginsReady ||= (async () => {
+      const { PluginHost } = await import('../plugins/host.js');
+      this.pluginHost = new PluginHost(this);
+      await this.pluginHost.loadInstalled();
+      return this.pluginHost;
+    })();
+    return this.pluginsReady;
   }
 }
 

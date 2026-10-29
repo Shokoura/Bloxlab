@@ -8,6 +8,7 @@ import { CFrame, Vector3 } from '../engine/datatypes.js';
 import { materialPhysics } from '../engine/bridge.js';
 import { partShape } from '../engine/geom.js';
 import { partMass } from '../engine/classes/parts.js';
+import { terrainSurfaces, terrainShapes } from '../render/terrain.js';
 
 let ready = null;
 export const initRapier = () => (ready ||= RAPIER.init());
@@ -135,6 +136,7 @@ export class Physics {
   }
   onProp(inst, name, opts) {
     if (opts && opts.physics) return;
+    if (inst.ClassName === 'Terrain') { if (name === 'SmoothGrid' || name === 'Voxels') this.terrainDirty = true; return; }
     if (this.parts.has(inst)) {
       if (PHYS_PROPS.has(name)) this.dirty.add(inst);
       else if (name === 'CFrame') {
@@ -569,7 +571,34 @@ export class Physics {
   }
 
   // ------------------------------------------------------------ stepping
+  /** Fixed colliders for terrain voxels (trimeshes per chunk) and scripted Fill* shapes. */
+  rebuildTerrain() {
+    this.terrainDirty = false;
+    if (this.terrainBody) { try { this.rw.removeRigidBody(this.terrainBody); } catch { /* ignore */ } this.terrainBody = null; }
+    const t = this.ws.findFirstChildOfClass('Terrain');
+    if (!t) return;
+    const body = this.rw.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    this.terrainBody = body;
+    const groups = this.groupsFor(t);
+    const add = (desc) => { desc.setCollisionGroups(groups).setFriction(0.8).setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS).setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.ALL); const c = this.rw.createCollider(desc, body); this.byCollider.set(c.handle, t); };
+    for (const s of terrainSurfaces(t)) {
+      if (!s.solid.idx.length) continue;
+      add(RAPIER.ColliderDesc.trimesh(new Float32Array(s.solid.pos), new Uint32Array(s.solid.idx)));
+    }
+    for (const v of terrainShapes(t)) {
+      if (v.material && v.material.Name === 'Water') continue;
+      const h = v.size.mul(0.5);
+      const d = v.shape === 'ball' ? RAPIER.ColliderDesc.ball(h.X) : v.shape === 'cylinder' ? RAPIER.ColliderDesc.cylinder(h.X, h.Y).setRotation(quat(CFrame.angles(0, 0, Math.PI / 2))) : RAPIER.ColliderDesc.cuboid(h.X, h.Y, h.Z);
+      const cf = v.cf;
+      const q = quat(cf);
+      if (v.shape === 'cylinder') d.setRotation(quat(cf.mul(CFrame.angles(0, 0, Math.PI / 2)))); else d.setRotation(q);
+      d.setTranslation(cf.X, cf.Y, cf.Z);
+      add(d);
+    }
+  }
+
   step(dt) {
+    if (this.terrainDirty) this.rebuildTerrain();
     this.flushDirty();
     if (this.constraintsDirty) { this.constraintsDirty = false; this.syncConstraints(); }
     const g = this.ws.get('Gravity') ?? 196.2;

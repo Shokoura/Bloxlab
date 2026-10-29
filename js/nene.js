@@ -80,7 +80,9 @@ export async function initNene() {
   Nene.onVisibility((visible) => {
     const app = nene.app;
     if (!app) return;
-    app.paused = !visible;
+    // a networked game keeps running (other players depend on it); everything else pauses
+    const networked = app.session && (app.session.mode === 'join' || (app.session.hosts && app.session.hosts.length) || (app.session.server && [...app.session.server.replicator.conns.values()].some((c) => !c.transport.local)));
+    app.paused = !visible && !networked;
     if (!visible && document.pointerLockElement) document.exitPointerLock();
     if (app.session) app.session.setAudioMuted?.(!visible);
   });

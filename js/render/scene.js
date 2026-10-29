@@ -4,6 +4,7 @@ import { boxGeometry, wedgeGeometry, cornerWedgeGeometry, sphereGeometry, cylind
 import { partMaterial, srgb } from './materials.js';
 import { LightingView } from './lighting.js';
 import { isClothedLimb, composite, faceMaterials, meshTexture } from './clothing.js';
+import { buildTerrainObject } from './terrain.js';
 import { Color3, Vector3 } from '../engine/datatypes.js';
 
 const tmpM = new THREE.Matrix4();
@@ -68,6 +69,7 @@ export class SceneView {
   onAdded(inst) {
     if (CLOTHING.has(inst.ClassName)) this.clothingChanged(inst.parent);
     inst.forTree((d) => {
+      if (d.ClassName === 'Terrain' && this.inWorkspace(d)) { this.terrain = d; this.terrainDirty = true; }
       if (d.isA('BasePart') && d.ClassName !== 'Terrain' && this.inWorkspace(d)) this.pending.add(d);
       else if (VISUAL_CLASSES.has(d.ClassName) && d.parent && this.objects.has(d.parent)) this.pending.add(d.parent);
       else if (d.ClassName === 'Lighting' || (d.parent && d.parent.ClassName === 'Lighting')) this.dirtyLighting = true;
@@ -85,6 +87,7 @@ export class SceneView {
     if (inst.ClassName === 'Lighting' || (oldParent && oldParent.ClassName === 'Lighting')) this.dirtyLighting = true;
   }
   onProp(inst, name) {
+    if (inst.ClassName === 'Terrain') { if (name === 'SmoothGrid' || name === 'Voxels' || name === 'WaterColor' || name === 'WaterTransparency' || name === 'MaterialColors') this.terrainDirty = true; return; }
     const e = this.objects.get(inst);
     if (e) {
       if (name === 'CFrame') { this.place(e, inst); return; }
@@ -110,6 +113,12 @@ export class SceneView {
       }
     }
     if (this.dirtyLighting) { this.dirtyLighting = false; this.lightingView.update(); }
+    if (this.terrainDirty) {
+      this.terrainDirty = false;
+      if (this.terrainObj) { this.root.remove(this.terrainObj); this.terrainObj.traverse((o) => { o.geometry?.dispose(); }); this.terrainObj = null; }
+      const t = this.terrain;
+      if (t && t.dm && this.inWorkspace(t)) { try { this.terrainObj = buildTerrainObject(t); this.root.add(this.terrainObj); } catch (e) { console.warn('[terrain]', e); } }
+    }
   }
 
   disposeEntry(e) {

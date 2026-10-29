@@ -132,6 +132,11 @@ const sChar = [...server.players.keys()][0].props.Character;
 server.world.exec('local p = game.Players:GetPlayers()[1] p.Character:PivotTo(CFrame.new(50, 10, 50))');
 tick(3);
 ok(Math.abs(hrp.props.CFrame.X - 50) < 1 && Math.abs(hrp.props.CFrame.Z - 50) < 1, 'server PivotTo moves the owner', `${hrp.props.CFrame.X},${hrp.props.CFrame.Z}`);
+// terrain filled by a server script replicates and is solid on both sides
+server.world.exec('workspace.Terrain:FillBlock(CFrame.new(80, 10, 80), Vector3.new(24, 4, 24), Enum.Material.Grass) game.Players:GetPlayers()[1].Character:PivotTo(CFrame.new(80, 20, 80))');
+tick(90);
+ok(Math.abs(hrp.props.CFrame.Y - 15) < 0.6, 'stands on scripted terrain', `y=${hrp.props.CFrame.Y}`);
+ok((client.world.dm.findFirstChildOfClass('Workspace').findFirstChildOfClass('Terrain').props.Voxels || []).length === 1, 'terrain fill replicated');
 // damage + death + respawn
 server.world.exec('game.Players:GetPlayers()[1].Character.Humanoid.Health = 0');
 tick(2);

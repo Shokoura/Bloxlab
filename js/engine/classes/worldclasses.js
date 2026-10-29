@@ -118,6 +118,7 @@ defineBehavior('Workspace', {
       set: (ws, v) => { ws.rawSet('CurrentCamera', v); },
       type: 'Ref',
     },
+    Terrain: { get: (ws) => ws.findFirstChildOfClass('Terrain'), readonly: true, type: 'Ref' },
     DistributedGameTime: { get: (ws) => (ws.world ? ws.world.scheduler.clock : 0), readonly: true, type: 'Float64' },
     Gravity: { get: (ws) => ws.props.Gravity ?? 196.2, set: (ws, v) => ws.rawSet('Gravity', v), type: 'Float32' },
   },
@@ -230,12 +231,10 @@ defineBehavior('Lighting', {
 });
 
 // ------------------------------------------------------------------ Terrain (voxels are kept as part-like boxes)
-const terrainBlocks = (t) => (t.voxels ||= []);
+// Shapes added with Fill* are kept in the (replicated) Voxels property as [cframe, size, material, shape]
 function terrainAdd(t, cf, size, material, shape = 'box') {
-  terrainBlocks(t).push({ cf, size, material, shape });
-  const w = t.world;
-  if (w && w.hooks.terrainChanged) w.hooks.terrainChanged(t);
-  t.changed('Voxels');
+  t.rawSet('Voxels', [...(t.props.Voxels || []), [cf, size, material, shape]]);
+  t.world?.hooks.terrainChanged?.(t);
 }
 defineBehavior('Terrain', {
   methods: methods({
@@ -244,7 +243,7 @@ defineBehavior('Terrain', {
     FillCylinder: (self, cf, height, radius, mat) => { terrainAdd(self, cf.mul(CFrame.angles(0, 0, Math.PI / 2)), new Vector3(height, radius * 2, radius * 2), mat || E('Material', 'Grass'), 'cylinder'); },
     FillWedge: (self, cf, size, mat) => { terrainAdd(self, cf, size, mat || E('Material', 'Grass'), 'wedge'); },
     FillRegion: (self, region, res, mat) => { if (mat && mat.Name === 'Air') return; terrainAdd(self, region.CFrame, region.Size, mat || E('Material', 'Grass')); },
-    Clear: (self) => { self.voxels = []; self.world?.hooks.terrainChanged?.(self); self.changed('Voxels'); },
+    Clear: (self) => { self.rawSet('Voxels', []); self.rawSet('SmoothGrid', new Uint8Array([1, 5])); self.world?.hooks.terrainChanged?.(self); },
     ReadVoxels: () => [new LuaTable(), new LuaTable()],
     WriteVoxels: () => {},
     ReplaceMaterial: () => {},

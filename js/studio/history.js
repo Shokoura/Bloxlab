@@ -1,4 +1,7 @@
 // Undo / redo for the edit world. Changes are recorded by hooks in Instance (world.recorder).
+// layout results written by the GUI renderer are not user edits
+const COMPUTED = new Set(['AbsolutePosition', 'AbsoluteSize', 'AbsoluteRotation', 'AbsoluteContentSize', 'AbsoluteCanvasSize', 'AbsoluteWindowSize', 'AbsoluteCellSize', 'AbsoluteCellCount', 'TextBounds', 'TextFits', 'ContentText']);
+
 export class History {
   constructor(world, onChange) {
     this.world = world;
@@ -9,25 +12,47 @@ export class History {
     this.onChange = onChange || (() => {});
     this.suspended = false;
   }
-  attach(world) { this.world = world; this.undoStack = []; this.redoStack = []; this.current = null; this.depth = 0; this.world.recorder = null; this.onChange(); }
+  attach(world) { this.world = world; this.undoStack = []; this.redoStack = []; this.current = null; this.depth = 0; this.loose = null; this.world.recorder = null; if (this.looseOn) this.resetLoose(); this.onChange(); }
+
+  static recorderFor(rec) {
+    return {
+      prop: (inst, prop, old) => { if (COMPUTED.has(prop)) return; const k = `p${inst.id}:${prop}`; if (rec.seen.has(k)) return; rec.seen.add(k); rec.ops.push({ t: 'prop', inst, prop, old }); },
+      attr: (inst, name, old) => { const k = `a${inst.id}:${name}`; if (rec.seen.has(k)) return; rec.seen.add(k); rec.ops.push({ t: 'attr', inst, name, old }); },
+      parent: (inst, old, index) => { const k = `r${inst.id}`; if (rec.seen.has(k)) return; rec.seen.add(k); rec.ops.push({ t: 'parent', inst, old, index }); },
+    };
+  }
+
+  /**
+   * Background recording of changes made outside begin/commit (plugins, scripts). A
+   * ChangeHistoryService:SetWaypoint() turns what was collected into one undo step.
+   */
+  enableLoose() { this.looseOn = true; if (!this.loose) this.resetLoose(); }
+  resetLoose() {
+    this.loose = { name: 'Change', ops: [], seen: new Set() };
+    if (this.depth === 0 && this.world) this.world.recorder = History.recorderFor(this.loose);
+  }
+  waypoint(name) {
+    if (!this.looseOn) return;
+    const rec = this.loose;
+    this.resetLoose();
+    if (rec && rec.ops.length) { rec.name = name; this.finish(rec); }
+  }
 
   begin(name = 'Change') {
     if (this.depth++ > 0) return;
     this.current = { name, ops: [], seen: new Set() };
-    const rec = this.current;
-    this.world.recorder = {
-      prop: (inst, prop, old) => { const k = `p${inst.id}:${prop}`; if (rec.seen.has(k)) return; rec.seen.add(k); rec.ops.push({ t: 'prop', inst, prop, old }); },
-      attr: (inst, name, old) => { const k = `a${inst.id}:${name}`; if (rec.seen.has(k)) return; rec.seen.add(k); rec.ops.push({ t: 'attr', inst, name, old }); },
-      parent: (inst, old, index) => { const k = `r${inst.id}`; if (rec.seen.has(k)) return; rec.seen.add(k); rec.ops.push({ t: 'parent', inst, old, index }); },
-    };
+    this.world.recorder = History.recorderFor(this.current);
   }
   commit() {
     if (this.depth === 0) return;
     if (--this.depth > 0) return;
     const rec = this.current;
     this.current = null;
-    this.world.recorder = null;
+    this.world.recorder = this.looseOn && this.loose ? History.recorderFor(this.loose) : null;
     if (!rec || !rec.ops.length) return;
+    this.finish(rec);
+  }
+  finish(rec) {
     for (const op of rec.ops) {
       if (op.t === 'prop') op.now = op.inst.props[op.prop];
       else if (op.t === 'attr') op.now = op.inst.getAttribute(op.name);
