@@ -124,7 +124,8 @@ export class GameServer {
     if (taken.has(name)) { let i = 2; while (taken.has(`${name}${i}`)) i++; name = `${name}${i}`; }
     const player = new Instance('Player', w);
     player.props.Name = name;
-    player.props.DisplayName = String(hello.displayName || name).slice(0, 30);
+    const requested = String(hello.name || 'Player').replace(/[^\w]/g, '').slice(0, 20) || 'Player';
+    player.props.DisplayName = name !== requested ? name : String(hello.displayName || name).slice(0, 30);
     player.props.UserId = Number(hello.userId) > 0 ? Number(hello.userId) : -conn.id;
     player.props.CharacterAppearanceId = player.props.UserId;
     player.avatar = hello.avatar || null;
@@ -232,7 +233,9 @@ export class GameServer {
     const app = this.app;
     const rig = (app && app.settings.get('avatarRig')) || 'R15';
     const avatar = player.avatar;
-    if (app && app.avatars && (desc || (avatar && avatar.mode && avatar.mode !== 'blocky'))) {
+    const local = !!this.players.get(player)?.conn?.transport?.local;
+    const allowed = local || !app || app.settings.get('loadOtherAvatars') !== false;
+    if (app && app.avatars && allowed && (desc || (avatar && avatar.mode && avatar.mode !== 'blocky'))) {
       try {
         const m = await app.avatars.characterFor(w, player, avatar, desc, rig);
         if (m) return m;

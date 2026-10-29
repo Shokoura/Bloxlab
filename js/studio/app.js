@@ -10,6 +10,7 @@ import { Explorer } from './explorer.js';
 import { Properties } from './properties.js';
 import { Output, CommandBar } from './output.js';
 import { CodeEditor } from './editor.js';
+import { GuiRenderer } from '../game/gui.js';
 import { SceneView } from '../render/scene.js';
 import { World } from '../engine/world.js';
 import { Instance } from '../engine/instance.js';
@@ -18,6 +19,7 @@ import { isCreatable, allClassNames, isA } from '../engine/reflect.js';
 import { Vector3, CFrame, Color3, BrickColor } from '../engine/datatypes.js';
 import { E, getEnum } from '../engine/enums.js';
 import { AssetManager } from '../assets/manager.js';
+import { Avatars } from '../assets/avatar.js';
 import { idb } from '../util/idb.js';
 import { utf8 } from '../formats/raw.js';
 
@@ -31,6 +33,7 @@ export class App {
     this.selection = new Selection();
     this.assets = new AssetManager(this.settings);
     this.assets.loadOverrides().catch(() => {});
+    this.avatars = new Avatars(this);
     this.clipboard = null;
     this.tabs = [];
     this.activeTab = null;
@@ -126,7 +129,7 @@ export class App {
       TEST: [
         { group: 'Simulation', items: test },
         { group: 'Multiplayer', items: [b('host', 'Host Game', 'network', () => this.hostDialog()), b('join', 'Join Game', 'wifi', () => this.joinDialog()), b('localtest', 'Local Test', 'users', () => this.localTestDialog())] },
-        { group: 'View', items: [b('clientserver', 'Client/Server', 'server', () => this.toggleClientServer()), b('console', 'Console', 'terminal', () => this.togglePanel('console'))] },
+        { group: 'View', items: [b('clientserver', 'Client/Server', 'server', () => this.toggleClientServer()), b('nextplayer', 'Next Player', 'users', () => this.nextPlayer()), b('console', 'Console', 'terminal', () => this.togglePanel('console'))] },
         { group: 'Avatar', items: [b('avatar', 'Avatar', 'avatar', () => this.openSettings('Avatar'))] },
       ],
       VIEW: [
@@ -209,6 +212,8 @@ export class App {
     this.closeScriptTabs();
     this.editView = new SceneView(world, { assets: this.assets, edit: true });
     this.viewport.setView(this.editView, 'edit');
+    if (this.editGui) this.editGui.dispose();
+    this.editGui = new GuiRenderer({ world, app: this, viewport: this.viewport }, this.viewport.overlay, { edit: true });
     this.explorer.setWorld(world);
     this.properties.setWorld(world);
     this.project.name = name || 'Place1';
@@ -238,21 +243,35 @@ export class App {
   // ================================================================ main loop
   loop() {
     let last = performance.now();
-    const frame = (t) => {
-      requestAnimationFrame(frame);
-      const dt = Math.min(0.1, (t - last) / 1000);
+    const step = (t, render) => {
+      const dt = Math.min(0.1, Math.max(0, (t - last) / 1000));
       last = t;
       if (this.paused) return;
       try {
-        if (this.session) this.session.tick(dt);
-        else this.editWorld.scheduler.step(dt);
+        if (this.session) {
+          this.session.tick(dt);
+          if ((this.statusTick = (this.statusTick || 0) + dt) > 1) { this.statusTick = 0; this.updateRibbonState(); }
+        } else {
+          this.editWorld.scheduler.step(dt);
+          if (render && this.editGui) this.editGui.update();
+        }
+        if (!render) return;
         this.viewport.update(dt);
         if (this.activeTab === null || this.activeTab.kind === 'viewport') this.viewport.render();
         if (this.pluginHost) this.pluginHost.tick(dt);
       } catch (e) { console.error(e); }
     };
+    const frame = (t) => { requestAnimationFrame(frame); step(t, true); };
     requestAnimationFrame(frame);
+    // Browsers stop animation frames in background tabs; a hosted game must keep simulating,
+    // so a worker timer (not throttled like page timers) drives the worlds while hidden.
+    const hiddenTick = () => { if (document.hidden && this.session) step(performance.now(), false); };
+    try {
+      const w = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 33);'], { type: 'text/javascript' })));
+      w.onmessage = hiddenTick;
+    } catch { setInterval(hiddenTick, 33); }
   }
+
 
   // ================================================================ center tabs (viewport + scripts)
   renderTabs() {
@@ -734,18 +753,22 @@ export class App {
   }
 
   // ================================================================ play
-  async play(mode) {
+  async play(mode, extra = {}) {
     if (this.session) return;
     const { PlaySession } = await import('../game/session.js');
     const spawnAt = mode === 'here' ? this.viewport.cameraCFrame() : null;
     this.closeEditorFocus();
-    this.session = new PlaySession(this, { mode: mode === 'run' ? 'run' : 'play', spawnAt });
+    this.session = new PlaySession(this, { mode: mode === 'run' ? 'run' : 'play', spawnAt, ...extra });
     try { await this.session.start(); }
     catch (e) { console.error(e); toast(`Could not start: ${e.message}`, 'error'); this.session.stop(); this.session = null; return; }
     this.afterSessionStart();
   }
   afterSessionStart() {
     const s = this.session;
+    if (this.editGui) this.editGui.root.classList.add('hidden');
+    s.on((type) => {
+      if (type === 'active' && this.session === s && s.viewing === 'client' && s.clientWorld) { this.showWorldInPanels(s.clientWorld); this.updateRibbonState(); }
+    });
     this.commandBar.setTarget(s.clientWorld && this.commandTarget === 'client' ? 'Client' : 'Server');
     this.showWorldInPanels(s.clientWorld && this.viewClient !== false ? s.clientWorld : s.serverWorld);
     this.activateTab(null);
@@ -769,10 +792,19 @@ export class App {
     s.setViewWorld(this.viewClient ? 'client' : 'server');
     toast(`Viewing the ${this.viewClient ? 'client' : 'server'}`);
   }
+  ensureConsole() { if (this.consoleEl.classList.contains('hidden')) this.togglePanel('console'); }
+  nextPlayer() {
+    const s = this.session;
+    if (!s || s.clients.length < 2) { toast('Start a Local Test with several players first'); return; }
+    const i = s.clients.indexOf(s.active);
+    s.setActive(s.clients[(i + 1) % s.clients.length]);
+    toast(`Controlling ${s.active.localPlayer ? s.active.localPlayer.props.Name : s.active.label}`);
+  }
   stopPlay() {
     if (!this.session) return;
     this.session.stop();
     this.session = null;
+    if (this.editGui) { this.editGui.root.classList.remove('hidden'); this.editGui.dirty = true; }
     this.root.classList.remove('playing');
     this.viewport.setView(this.editView, 'edit');
     this.explorer.setWorld(this.editWorld);

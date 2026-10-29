@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { boxGeometry, wedgeGeometry, cornerWedgeGeometry, sphereGeometry, cylinderGeometry, headGeometry, trussGeometry } from './geometry.js';
 import { partMaterial, srgb } from './materials.js';
 import { LightingView } from './lighting.js';
+import { isClothedLimb, composite, faceMaterials, meshTexture } from './clothing.js';
 import { Color3, Vector3 } from '../engine/datatypes.js';
 
 const tmpM = new THREE.Matrix4();
@@ -15,6 +16,7 @@ const PART_PROPS = new Set(['Size', 'Shape', 'shape', 'Material', 'Color', 'Tran
 const MESH_PROPS = new Set(['MeshType', 'MeshId', 'TextureId', 'Scale', 'Offset', 'VertexColor']);
 const DECAL_PROPS = new Set(['Texture', 'Face', 'Transparency', 'Color3', 'StudsPerTileU', 'StudsPerTileV', 'OffsetStudsU', 'OffsetStudsV', 'LocalTransparencyModifier', 'ZIndex']);
 const LIGHT_PROPS = new Set(['Brightness', 'Color', 'Range', 'Enabled', 'Shadows', 'Angle', 'Face']);
+const CLOTHING = new Set(['Shirt', 'Pants', 'ShirtGraphic', 'BodyColors']);
 const VISUAL_CLASSES = new Set(['SpecialMesh', 'BlockMesh', 'CylinderMesh', 'Decal', 'Texture', 'PointLight', 'SpotLight', 'SurfaceLight', 'SelectionBox', 'Highlight']);
 
 // NormalId -> rotation that makes a +Z facing plane face that direction
@@ -58,7 +60,13 @@ export class SceneView {
     return false;
   }
 
+  /** Clothing changed on a character: its limbs are rebuilt. */
+  clothingChanged(model) {
+    if (!model) return;
+    for (const c of model.children) if (this.objects.has(c)) this.pending.add(c);
+  }
   onAdded(inst) {
+    if (CLOTHING.has(inst.ClassName)) this.clothingChanged(inst.parent);
     inst.forTree((d) => {
       if (d.isA('BasePart') && d.ClassName !== 'Terrain' && this.inWorkspace(d)) this.pending.add(d);
       else if (VISUAL_CLASSES.has(d.ClassName) && d.parent && this.objects.has(d.parent)) this.pending.add(d.parent);
@@ -66,6 +74,7 @@ export class SceneView {
     });
   }
   onRemoved(inst, oldParent) {
+    if (CLOTHING.has(inst.ClassName)) this.clothingChanged(oldParent);
     inst.forTree((d) => {
       const e = this.objects.get(d);
       if (e) { this.disposeEntry(e); this.objects.delete(d); }
@@ -82,6 +91,7 @@ export class SceneView {
       if (PART_PROPS.has(name)) this.pending.add(inst);
       return;
     }
+    if (CLOTHING.has(inst.ClassName)) { this.clothingChanged(inst.parent); return; }
     if (VISUAL_CLASSES.has(inst.ClassName) && inst.parent && this.objects.has(inst.parent)) {
       if (MESH_PROPS.has(name) || DECAL_PROPS.has(name) || LIGHT_PROPS.has(name) || name === 'Adornee' || name === 'Visible' || name === 'Enabled') this.pending.add(inst.parent);
       return;
@@ -164,6 +174,15 @@ export class SceneView {
         });
       } else materials = partMaterial(matName, color, transparency, P.Reflectance || 0);
       mesh = new THREE.Mesh(geom, materials);
+    }
+    if (mesh && !specialMesh && part.ClassName !== 'MeshPart' && isClothedLimb(part) && this.assets) {
+      // shirt / pants templates on a blocky limb
+      composite(part.parent, this.assets).then((layers) => {
+        if (this.objects.get(part) !== e || !e.mesh) return;
+        e.mesh.geometry = new THREE.BoxGeometry(size.X, size.Y, size.Z);
+        e.mesh.material = faceMaterials(part, layers, transparency);
+        e.mesh.userData.ownGeometry = true; e.mesh.userData.ownMaterial = true;
+      }).catch(() => {});
     }
     if (mesh) {
       mesh.castShadow = cast && transparency < 0.6 && matName !== 'ForceField';
@@ -259,6 +278,13 @@ export class SceneView {
         m.position.set(-center.x * m.scale.x, -center.y * m.scale.y, -center.z * m.scale.z);
         m.castShadow = transparency < 0.6; m.receiveShadow = true;
         if (texId) { m.userData.ownMaterial = true; this.assets.texture(texId).then((t) => { if (t) { mat.map = t; mat.needsUpdate = true; } }); }
+        else if (isClothedLimb(part)) {
+          composite(part.parent, this.assets).then((layers) => {
+            if (part.__meshToken !== token) return;
+            m.material = new THREE.MeshStandardMaterial({ map: meshTexture(part, layers), roughness: 0.75, transparent: transparency > 0, opacity: 1 - transparency });
+            m.userData.ownMaterial = true;
+          }).catch(() => {});
+        }
         holder.add(m);
       }).catch(() => {});
     }

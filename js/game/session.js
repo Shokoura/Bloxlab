@@ -38,7 +38,9 @@ export class PlaySession {
     const s = this.app.settings;
     const nene = this.app.nene && this.app.nene.user;
     const base = (s.get('playerName') || (nene && nene.username) || 'Player').replace(/[^\w]/g, '').slice(0, 16) || 'Player';
-    const avatar = { mode: s.get('avatarMode'), user: s.get('avatarUser') || '', rig: s.get('avatarRig') };
+    const colors = {};
+    for (const [k, v] of Object.entries(s.get('blockyColors') || {})) { const n = parseInt(String(v).slice(1), 16); if (!Number.isNaN(n)) colors[k] = [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; }
+    const avatar = { mode: s.get('avatarMode'), user: s.get('avatarUser') || '', rig: s.get('avatarRig'), colors: Object.keys(colors).length ? colors : undefined };
     const userId = /^\d+$/.test(avatar.user) ? Number(avatar.user) : 0;
     return { name: i ? `${base}${i + 1}` : base, displayName: i ? `${base} ${i + 1}` : base, userId: i ? 0 : userId, avatar: i ? { mode: 'blocky' } : avatar };
   }

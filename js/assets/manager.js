@@ -167,21 +167,37 @@ export class AssetManager {
     } finally { clearTimeout(timer); }
   }
 
-  /** Roblox web API through the configured API proxy: api('avatar', '/v1/users/1/avatar') */
-  async api(service, path) {
+  /** Roblox web API through the configured API proxy: api('avatar', '/v1/users/1/avatar'); body => POST JSON */
+  async api(service, path, body) {
     const base = (this.settings.get('apiProxy') || this.inferApiProxy() || '').replace(/\/+$/, '');
-    const tries = [];
-    if (base) tries.push(`${base}/api/${service}${path}`);
-    if (this.relayApi && this.settings.get('hostRelay')) {
-      try { return await this.relayApi(service, path); } catch (e) { tries.push(`host: ${e.message}`); }
+    const init = body === undefined ? { credentials: 'omit' } : { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+    const errors = [];
+    if (base) {
+      try { const r = await fetch(`${base}/api/${service}${path}`, init); if (r.ok) return r.json(); errors.push(`proxy: HTTP ${r.status}`); } catch (e) { errors.push(`proxy: ${e.message}`); }
     }
-    for (const url of tries.filter((t) => /^https?:/.test(t))) {
-      const r = await fetch(url, { credentials: 'omit' });
-      if (r.ok) return r.json();
+    if (this.relayApi && this.settings.get('hostRelay') && body === undefined) {
+      try { return await this.relayApi(service, path); } catch (e) { errors.push(`host: ${e.message}`); }
     }
-    const r = await fetch(`https://${service}.roblox.com${path}`, { credentials: 'omit' }).catch(() => null);
-    if (r && r.ok) return r.json();
-    throw new Error(`Roblox API ${service}${path} is unreachable (configure an API proxy in Settings → External Load)`);
+    if (this.settings.get('assetMode') !== 'offline') {
+      try { const r = await fetch(`https://${service}.roblox.com${path}`, init); if (r.ok) return r.json(); errors.push(`direct: HTTP ${r.status}`); } catch (e) { errors.push(`direct: ${e.message}`); }
+    }
+    throw new Error(`Roblox API ${service}${path} is unreachable (${errors.join('; ') || 'offline'}). Set an API proxy in Settings → External Load.`);
+  }
+
+  /** { id, name, displayName } for a username or user id, or null. */
+  async lookupUser(q) {
+    const s = String(q || '').trim();
+    if (!s) return null;
+    if (/^\d+$/.test(s)) { const j = await this.api('users', `/v1/users/${s}`); return j && j.id ? { id: j.id, name: j.name, displayName: j.displayName } : null; }
+    try {
+      const j = await this.api('users', '/v1/usernames/users', { usernames: [s], excludeBannedUsers: false });
+      const u = j && j.data && j.data[0];
+      if (u) return { id: u.id, name: u.name, displayName: u.displayName };
+    } catch { /* POST may be blocked; fall back to search */ }
+    const j = await this.api('users', `/v1/users/search?keyword=${encodeURIComponent(s)}&limit=10`);
+    const list = (j && j.data) || [];
+    const u = list.find((x) => x.name.toLowerCase() === s.toLowerCase()) || list[0];
+    return u ? { id: u.id, name: u.name, displayName: u.displayName } : null;
   }
   inferApiProxy() {
     const p = (this.settings.get('proxies') || []).find((x) => x.enabled !== false && /\/asset(\?|$)/.test(x.url));
