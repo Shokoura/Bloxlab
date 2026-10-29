@@ -11,6 +11,17 @@ import { enumFromValue, EnumItem, E } from './enums.js';
 // Services every place starts with (Studio creates these).
 export const DEFAULT_SERVICES = ['Workspace', 'Players', 'Lighting', 'MaterialService', 'ReplicatedFirst', 'ReplicatedStorage', 'ServerScriptService', 'ServerStorage', 'StarterGui', 'StarterPack', 'StarterPlayer', 'Teams', 'SoundService', 'Chat', 'TextChatService', 'LocalizationService', 'TestService'];
 
+// ------------------------------------------------------------------ terrain fills (Terrain.Voxels) <-> attribute
+const TERRAIN_FILLS_ATTR = 'BloxlabTerrainFills';
+function encodeTerrainFills(list) {
+  return JSON.stringify(list.filter((v) => Array.isArray(v) && v[0] && v[1]).map(([cf, size, mat, shape]) => ({ c: [cf.X, cf.Y, cf.Z, ...cf.r].map((n) => Math.round(n * 1e4) / 1e4), s: [size.X, size.Y, size.Z], m: mat ? mat.Name : 'Grass', k: shape || 'box' })));
+}
+function decodeTerrainFills(json) {
+  try {
+    return JSON.parse(typeof json === 'string' ? json : '[]').map((o) => [new CFrame(...o.c), new Vector3(...o.s), (() => { try { return E('Material', o.m); } catch { return E('Material', 'Grass'); } })(), o.k || 'box']);
+  } catch { return []; }
+}
+
 // ------------------------------------------------------------------ DataModel
 export function createDataModel(world) {
   const dm = new Instance('DataModel', world);
@@ -146,6 +157,7 @@ export function rawToInstances(rawRoots, world) {
       if (p.flags & F.ALIAS && p.extra) canon = p.extra;
       if (canon === 'Archivable') { inst.archivable = !!v; continue; }
       if (t === 'Ref') { pendingRefs.push([inst, canon, v]); continue; }
+      if (canon === 'SmoothGrid' && v) { inst.props.SmoothGrid = typeof v === 'string' ? utf8.enc.encode(v) : v; continue; }
       if (p.type === 'UniqueId' || p.type === 'SecurityCapabilities' || p.type === 'SharedString' || p.type === 'NetAssetRef' || (p.type === 'BinaryString' && canon !== 'Source')) {
         (inst.extra ||= new Map()).set(name, { t, v });
         continue;
@@ -153,6 +165,10 @@ export function rawToInstances(rawRoots, world) {
       inst.props[canon] = rawValueToEngine(p.type, t, v);
     }
     if (!ri.props.has('Name')) inst.props.Name = cn;
+    if (cn === 'Terrain' && inst.attrs && inst.attrs.has(TERRAIN_FILLS_ATTR)) {
+      inst.props.Voxels = decodeTerrainFills(inst.attrs.get(TERRAIN_FILLS_ATTR));
+      inst.attrs.delete(TERRAIN_FILLS_ATTR);
+    }
     for (const c of ri.children) {
       const ci = build(c);
       ci.parent = inst;
@@ -232,7 +248,13 @@ export function instancesToRaw(roots, { includeNonArchivable = false } = {}) {
       if (!(p.flags & F.SERIALIZES)) continue;
       const fileName = p.extra || k;
       if (k === 'Archivable') { ri.set(fileName, 'Bool', inst.archivable); continue; }
-      if (k === 'Attributes') { if (inst.attrs && inst.attrs.size) ri.set('AttributesSerialize', 'BinaryString', encodeAttributes(inst.attrs)); continue; }
+      if (k === 'Attributes') {
+        let attrs = inst.attrs;
+        // terrain shapes made by Fill* / the terrain tools are saved as an attribute Roblox ignores
+        if (inst.ClassName === 'Terrain' && inst.props.Voxels && inst.props.Voxels.length) { attrs = new Map(attrs || []); attrs.set(TERRAIN_FILLS_ATTR, encodeTerrainFills(inst.props.Voxels)); }
+        if (attrs && attrs.size) ri.set('AttributesSerialize', 'BinaryString', encodeAttributes(attrs));
+        continue;
+      }
       if (k === 'Tags') { if (inst.tags && inst.tags.size) ri.set('Tags', 'BinaryString', encodeTags(inst.tags)); continue; }
       let v;
       if (migr.has(k)) v = inst.props[migr.get(k)] || '';

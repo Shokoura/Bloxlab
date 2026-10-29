@@ -1,6 +1,7 @@
 // Terrain rendering + collision geometry: SmoothGrid voxels (4-stud cells) as blocky surfaces,
 // plus the boxes / balls / cylinders that scripts add with Terrain:Fill*.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Color3 } from '../engine/datatypes.js';
 import { decodeSmoothGrid, TERRAIN_MATERIALS } from '../formats/terrain.js';
 
@@ -110,17 +111,27 @@ export function buildTerrainObject(t) {
     if (s.solid.idx.length) { const m = new THREE.Mesh(toGeom(s.solid), solidMat); m.receiveShadow = true; m.castShadow = true; m.userData.inst = t; group.add(m); }
     if (s.water.idx.length) { const m = new THREE.Mesh(toGeom(s.water), waterMat); m.userData.inst = t; group.add(m); }
   }
+  // fill shapes are merged into one mesh per material (generated terrain can have thousands)
+  const byMat = new Map();
   for (const v of terrainShapes(t)) {
     const name = v.material ? v.material.Name : 'Grass';
-    const [r, g, b] = colorOf(t, name);
-    const geo = v.shape === 'cylinder' ? new THREE.CylinderGeometry(v.size.Y / 2, v.size.Y / 2, v.size.X, 24).rotateZ(Math.PI / 2)
-      : v.shape === 'ball' ? new THREE.SphereGeometry(v.size.X / 2, 24, 16) : new THREE.BoxGeometry(v.size.X, v.size.Y, v.size.Z);
-    const mat = name === 'Water' ? waterMat : new THREE.MeshStandardMaterial({ color: new THREE.Color(r, g, b).convertSRGBToLinear(), roughness: 0.92 });
-    const m = new THREE.Mesh(geo, mat);
+    const geo = v.shape === 'cylinder' ? new THREE.CylinderGeometry(v.size.Y / 2, v.size.Y / 2, v.size.X, 20).rotateZ(Math.PI / 2)
+      : v.shape === 'ball' ? new THREE.SphereGeometry(v.size.X / 2, 20, 14) : new THREE.BoxGeometry(v.size.X, v.size.Y, v.size.Z);
     const cf = v.cf, rr = cf.r;
-    m.matrixAutoUpdate = false;
-    m.matrix.set(rr[0], rr[1], rr[2], cf.X, rr[3], rr[4], rr[5], cf.Y, rr[6], rr[7], rr[8], cf.Z, 0, 0, 0, 1);
-    m.castShadow = m.receiveShadow = true;
+    geo.applyMatrix4(new THREE.Matrix4().set(rr[0], rr[1], rr[2], cf.X, rr[3], rr[4], rr[5], cf.Y, rr[6], rr[7], rr[8], cf.Z, 0, 0, 0, 1));
+    const flat = geo.index ? geo.toNonIndexed() : geo;
+    if (flat !== geo) geo.dispose();
+    if (!byMat.has(name)) byMat.set(name, []);
+    byMat.get(name).push(flat);
+  }
+  for (const [name, geos] of byMat) {
+    const merged = mergeGeometries(geos.map((g) => { for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'uv') g.deleteAttribute(k); return g; }), false);
+    for (const g of geos) g.dispose();
+    if (!merged) continue;
+    const [r, g, b] = colorOf(t, name);
+    const mat = name === 'Water' ? waterMat : new THREE.MeshStandardMaterial({ color: new THREE.Color(r, g, b).convertSRGBToLinear(), roughness: 0.92 });
+    const m = new THREE.Mesh(merged, mat);
+    m.castShadow = m.receiveShadow = name !== 'Water';
     m.userData.inst = t;
     group.add(m);
   }

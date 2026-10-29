@@ -124,6 +124,7 @@ export class App {
         { group: 'Parts', items: ['Block', 'Sphere', 'Wedge', 'CornerWedge', 'Cylinder', 'Truss', 'Spawn', 'Seat'].map((s) => b(`p-${s}`, s, { Block: 'part', Sphere: 'sphere', Wedge: 'wedge', CornerWedge: 'wedge', Cylinder: 'cylinder', Truss: 'truss', Spawn: 'spawn', Seat: 'part' }[s], () => this.insertPart(s))) },
         { group: 'Edit', items: [b('m-group', 'Group', 'group', () => this.group()), b('m-ungroup', 'Ungroup', 'ungroup', () => this.ungroup()), b('m-anchor', 'Anchor', 'anchor', () => this.toggleAnchor()), b('m-lock', 'Lock', 'lock', () => this.toggleLock()), b('m-color', 'Color', 'color', (e) => this.colorMenu(e)), b('m-mat', 'Material', 'material', (e) => this.materialMenu(e))] },
         { group: 'Constraints', items: [b('weld', 'Weld', 'weld', () => this.weldSelection()), b('attach', 'Attachment', 'dot', () => this.insertObject('Attachment'))] },
+        { group: 'Terrain', items: [b('t-gen', 'Generate', 'terrain', () => import('./terrain-tools.js').then((m) => m.generateDialog(this))), b('tool-terrain', 'Brush', 'layers', () => import('./terrain-tools.js').then((m) => m.brushDialog(this)), { toggle: 'terrain' }), b('t-clear', 'Clear', 'trash', () => import('./terrain-tools.js').then((m) => m.clearTerrain(this)))] },
         { group: 'Advanced', items: [b('script', 'Script', 'script', () => this.insertObject('Script')), b('lscript', 'LocalScript', 'script', () => this.insertObject('LocalScript')), b('mscript', 'ModuleScript', 'script', () => this.insertObject('ModuleScript'))] },
         { group: 'Effects', items: ['PointLight', 'SpotLight', 'ParticleEmitter', 'Fire', 'Smoke', 'Sparkles', 'Sound'].map((c) => b(`e-${c}`, c.replace('Emitter', ''), c === 'Sound' ? 'speaker' : c.includes('Light') ? 'bulb' : 'sparkles', () => this.insertObject(c))) },
       ],
@@ -175,7 +176,7 @@ export class App {
     const playing = !!this.session;
     for (const id of ['play', 'playhere', 'run']) { const el = document.getElementById(`rb-${id}`); if (el) el.disabled = playing; }
     const stop = document.getElementById('rb-stop'); if (stop) stop.disabled = !playing;
-    for (const t of ['select', 'move', 'scale', 'rotate']) { const el = document.getElementById(`rb-tool-${t}`); if (el) el.classList.toggle('on', this.viewport?.tool === t); }
+    for (const t of ['select', 'move', 'scale', 'rotate', 'terrain']) { const el = document.getElementById(`rb-tool-${t}`); if (el) el.classList.toggle('on', this.viewport?.tool === t); }
     this.titleEl.textContent = `${this.project.name}${this.project.dirty ? ' •' : ''}`;
     document.title = `${this.project.name} - Bloxlab Studio`;
     if (this.session) this.statusEl.textContent = this.session.statusText();

@@ -86,7 +86,14 @@ export class Viewport {
       moved = false;
       if (e.button === 2) { rmb = true; c.setPointerCapture(e.pointerId); }
       else if (e.button === 1) { mmb = true; e.preventDefault(); c.setPointerCapture(e.pointerId); }
-      else if (e.button === 0 && !this.gizmo.dragging && !this.gizmo.axis) {
+      else if (e.button === 0 && this.tool === 'terrain') {
+        const p = this.groundPoint(e.clientX, e.clientY);
+        const hit = this.pick(e.clientX, e.clientY, { includeLocked: true });
+        this.painting = { last: p.clone() };
+        c.setPointerCapture(e.pointerId);
+        this.app.history.begin('Terrain Brush');
+        import('./terrain-tools.js').then((m) => { this.terrainTools = m; m.stroke(this.app, p, hit && hit.normal); });
+      } else if (e.button === 0 && !this.gizmo.dragging && !this.gizmo.axis) {
         const hit = this.pick(e.clientX, e.clientY);
         if (hit && this.app.selection.has(this.selectTarget(hit.inst, e.altKey)) && (this.tool === 'select' || this.tool === 'move')) {
           dragPart = { start: hit.point.clone(), began: false };
@@ -99,6 +106,15 @@ export class Viewport {
       const dx = e.clientX - last.x, dy = e.clientY - last.y;
       last = { x: e.clientX, y: e.clientY };
       if (Math.abs(e.clientX - downAt.x) + Math.abs(e.clientY - downAt.y) > 4) moved = true;
+      if (this.painting && this.terrainTools) {
+        const p = this.groundPoint(e.clientX, e.clientY);
+        if (p.distanceTo(this.painting.last) > this.terrainTools.brush.radius * 0.7) {
+          const hit = this.pick(e.clientX, e.clientY, { includeLocked: true });
+          this.painting.last = p.clone();
+          this.terrainTools.stroke(this.app, p, hit && hit.normal);
+        }
+        return;
+      }
       if (rmb) { this.yaw -= dx * 0.005; this.pitch -= dy * 0.005; this.applyCameraAngles(); }
       else if (mmb) {
         const s = Math.max(0.05, this.focusDistance() * 0.0016);
@@ -118,6 +134,7 @@ export class Viewport {
         if (e.shiftKey || e.ctrlKey || e.metaKey) { if (target) this.app.selection.toggle(target); }
         else this.app.selection.set(target ? [target] : []);
       }
+      if (this.painting) { this.painting = null; this.app.history.commit(); }
       if (dragPart && dragPart.began) this.app.history.commit();
       dragPart = null;
       rmb = false; mmb = false; last = null;
@@ -236,7 +253,7 @@ export class Viewport {
     const sel = this.app.selection.list();
     for (const inst of sel) this.addSelectionHelper(inst);
     const b = this.app.boundsOf(sel);
-    if (b && this.tool !== 'select') {
+    if (b && this.tool !== 'select' && this.tool !== 'terrain') {
       const pivot = this.app.pivotOf(sel);
       cframeToMatrix(pivot, this.gizmoProxy.matrix);
       this.gizmoProxy.matrix.decompose(this.gizmoProxy.position, this.gizmoProxy.quaternion, this.gizmoProxy.scale);
