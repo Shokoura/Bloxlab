@@ -352,7 +352,9 @@ export class Input {
     const dir = new Vector3(dir3.x, dir3.y, dir3.z);
     const ch = this.rt.character;
     const tf = this.mouseInst.targetFilter;
-    const hit = raycastWorld(this.rt.service('Workspace'), origin, dir.mul(1000), (p) => !(ch && p.isDescendantOf(ch)) && !(tf && (p === tf || p.isDescendantOf(tf))) && p.props.CanQuery !== false && (p.props.Transparency ?? 0) < 1);
+    const filter = (p) => !(ch && p.isDescendantOf(ch)) && !(tf && (p === tf || p.isDescendantOf(tf))) && p.props.CanQuery !== false && (p.props.Transparency ?? 0) < 1;
+    const rc = this.world.hooks.raycast;
+    const hit = rc ? rc(origin, dir.mul(1000), filter) : raycastWorld(this.rt.service('Workspace'), origin, dir.mul(1000), filter);
     const pos = hit ? hit.position : origin.add(dir.mul(1000));
     let surface = E('NormalId', 'Top');
     if (hit && hit.part) {
@@ -400,16 +402,20 @@ export class Input {
     const rt = this.rt;
     if (this.wantsLock() === false && this.locked) document.exitPointerLock();
     this.pollGamepad(dt);
-    // movement
+    // movement: the raw vector is what ControlModule:GetMoveVector() returns (W = -Z)
     const hum = rt.humanoid;
-    if (hum && hum.controller && hum.state !== 'Dead') {
-      let x = 0, z = 0;
-      const typing = !!this.focusedTextBox || (document.activeElement && document.activeElement.closest && document.activeElement.closest('.game-ui') && /input|textarea/i.test(document.activeElement.tagName));
-      if (!typing) for (const [k, [dx, dz]] of Object.entries(MOVE_KEYS)) if (this.keys.has(k) && !this.sunk.has(k)) { x += dx; z += dz; }
-      if (this.touchMove) { x += this.touchMove.x; z += this.touchMove.y; }
-      if (this.pad) { x += this.pad.x; z += this.pad.y; }
-      const mag = Math.hypot(x, z);
-      if (mag > 1) { x /= mag; z /= mag; }
+    let x = 0, z = 0;
+    const typing = !!this.focusedTextBox || (document.activeElement && document.activeElement.closest && document.activeElement.closest('.game-ui') && /input|textarea/i.test(document.activeElement.tagName));
+    if (!typing) for (const [k, [dx, dz]] of Object.entries(MOVE_KEYS)) if (this.keys.has(k) && !this.sunk.has(k)) { x += dx; z += dz; }
+    if (this.touchMove) { x += this.touchMove.x; z += this.touchMove.y; }
+    if (this.pad) { x += this.pad.x; z += this.pad.y; }
+    const mag = Math.hypot(x, z);
+    if (mag > 1) { x /= mag; z /= mag; }
+    rt.moveVector = rt.controlsDisabled ? Vector3.zero : new Vector3(x, 0, z);
+    const jumping = (this.keys.has('Space') && !this.sunk.has('Space') && !typing) || this.touchJump || (this.pad && this.pad.jump);
+    rt.jumpHeld = !!jumping && !rt.controlsDisabled;
+    if (hum && hum.seat && rt.jumpHeld) hum.jumpRequest = true;
+    if (hum && hum.controller && hum.state !== 'Dead' && !rt.controlsDisabled) {
       if (mag > 0.05) {
         const d = CFrame.angles(0, rt.camera.yaw, 0).vectorToWorld(new Vector3(x, 0, z));
         hum.moveDir = new Vector3(d.X, 0, d.Z);
@@ -417,8 +423,8 @@ export class Input {
         hum.walkTo = null;
         this.wasMoving = true;
       } else if (this.wasMoving) { hum.moveDir = Vector3.zero; this.wasMoving = false; }
-      if ((this.keys.has('Space') && !this.sunk.has('Space') && !typing) || this.touchJump || (this.pad && this.pad.jump)) hum.jumpRequest = true;
-    }
+      if (jumping) hum.jumpRequest = true;
+    } else if (hum && rt.controlsDisabled && this.wasMoving) { hum.moveDir = Vector3.zero; this.wasMoving = false; }
     // click detector hover
     const target = this.computeHit().target;
     const cd = target ? this.clickDetectorOf(target) : null;

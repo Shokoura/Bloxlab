@@ -160,6 +160,62 @@ for (let i = 0; i < 20; i++) { r2.tick(10); await new Promise((r) => setTimeout(
 ok(logs.some((l) => l.includes('[Client] coins 5')) && logs.some((l) => l.includes('[Client] invoke 5 Tester')), 'works over the string transport', logs.filter((l) => /error|warn/.test(l)).slice(0, 5).join(' | '));
 r2.server.stop(); r2.client.stop();
 
+// a constraint car: Seat:Sit on the server, network ownership, ControlModule steering on the client
+{
+  logs.length = 0;
+  const w = new World({ kind: 'edit', name: 'edit' });
+  const dm = newBaseplate(w);
+  w.setGameGlobals(dm);
+  const add = (cls, parent, props) => { const i = new Instance(cls, w); Object.assign(i.props, props); i.setParent(parent); return i; };
+  add('Script', dm.findFirstChildOfClass('ServerScriptService'), { Name: 'Cars', Source: `
+local ms = game.MarketplaceService
+local f = Instance.new("Folder") f.Name = "Stages" f.Parent = workspace
+local s1 = Instance.new("Part") s1.Name = "1" s1.Anchored = true s1.Parent = f
+print("numeric child", workspace.Stages[1] == s1, ms.ClassName)
+local car = Instance.new("Model") car.Name = "Car"
+local chassis = Instance.new("Part") chassis.Name = "Chassis" chassis.Size = Vector3.new(6, 1, 10) chassis.CFrame = CFrame.new(40, 3, 0) chassis.Parent = car
+local seat = Instance.new("VehicleSeat") seat.Name = "VehicleSeat" seat.Size = Vector3.new(2, 1, 2) seat.CFrame = CFrame.new(40, 4, 0) seat.Parent = car
+local weld = Instance.new("WeldConstraint") weld.Part0 = chassis weld.Part1 = seat weld.Parent = chassis
+local motors = Instance.new("Folder") motors.Name = "Motors" motors.Parent = car
+for _, x in ipairs({ -3.6, 3.6 }) do for _, z in ipairs({ -3.5, 3.5 }) do
+  local wheel = Instance.new("Part") wheel.Shape = Enum.PartType.Cylinder wheel.Size = Vector3.new(1, 3, 3) wheel.CFrame = CFrame.new(40 + x, 1.5, z) wheel.Parent = car
+  local a0 = Instance.new("Attachment") a0.Position = Vector3.new(x, -1.5, z) a0.Parent = chassis
+  local a1 = Instance.new("Attachment") a1.Parent = wheel
+  local h = Instance.new("HingeConstraint") h.Attachment0 = a0 h.Attachment1 = a1 h.ActuatorType = Enum.ActuatorType.Motor h.MotorMaxTorque = 5000 h.Parent = motors
+end end
+car.Parent = workspace
+game.Players.PlayerAdded:Connect(function(p)
+  p.CharacterAdded:Connect(function(ch)
+    seat:Sit(ch:WaitForChild("Humanoid"))
+    for _, d in ipairs(car:GetDescendants()) do if d:IsA("BasePart") then d:SetNetworkOwner(p) end end
+  end)
+end)` });
+  add('LocalScript', dm.findFirstChildOfClass('StarterPlayer').findFirstChildOfClass('StarterPlayerScripts'), { Name: 'Drive', Source: `
+local controls = require(game.Players.LocalPlayer.PlayerScripts:WaitForChild("PlayerModule"):WaitForChild("ControlModule"))
+local motors = workspace:WaitForChild("Car"):WaitForChild("Motors")
+game:GetService("RunService").RenderStepped:Connect(function()
+  for _, h in ipairs(motors:GetChildren()) do h.AngularVelocity = 20 * controls:GetMoveVector().Z end
+end)` });
+  const server = new GameServer(app, dm);
+  await server.start();
+  const [a, b] = loopbackPair();
+  server.replicator.addConnection(a);
+  const client = new ClientRuntime(app, b, { name: 'Driver' });
+  const tick = async (n) => { for (let i = 0; i < n; i++) { server.tick(1 / 60); client.tick(1 / 60); if (i % 20 === 0) await new Promise((r) => setTimeout(r, 0)); } };
+  await new Promise((r) => setTimeout(r, 30));
+  await tick(120);
+  ok(logs.some((l) => l.includes('numeric child true MarketplaceService')), 'folder[number] and game.Service indexing', logs.filter((l) => /numeric|error/.test(l)).join(' | '));
+  ok(client.humanoid && client.humanoid.seat && client.humanoid.seat.ClassName === 'VehicleSeat', 'server Seat:Sit seats the player');
+  const car = server.world.dm.findFirstChildOfClass('Workspace').findFirstChild('Car').findFirstChild('Chassis');
+  const z0 = car.props.CFrame.Z;
+  for (let i = 0; i < 150; i++) { client.moveVector = new Vector3(0, 0, -1); await tick(1); }
+  const moved = Math.abs(car.props.CFrame.Z - z0);
+  ok(moved > 8, 'client ControlModule input drives the owned car', `moved ${moved.toFixed(1)}`);
+  const hrpC = client.character.findFirstChild('HumanoidRootPart');
+  ok(Math.abs(hrpC.props.CFrame.Z - car.props.CFrame.Z) < 3, 'driver rides along on the client', `${hrpC.props.CFrame.Z} vs ${car.props.CFrame.Z}`);
+  server.stop(); client.stop();
+}
+
 const errors = logs.filter((l) => /:error\]/.test(l));
 if (errors.length) console.log('script errors:\n' + errors.join('\n'));
 console.log(`${total - fails}/${total} passed`);

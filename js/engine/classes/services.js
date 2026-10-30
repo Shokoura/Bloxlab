@@ -7,6 +7,7 @@ import { Vector3, Vector2, CFrame, Color3, UDim, UDim2, TweenInfo, PathWaypoint,
 import { E, getEnum, EnumItem } from '../enums.js';
 import { idb } from '../../util/idb.js';
 import { raycastWorld } from '../geom.js';
+import { groupsOfWorld, publishGroups, listFromGroups } from '../collision-groups.js';
 
 const str = (v, n, f) => { if (typeof v === 'string') return fromByteStr(v); if (typeof v === 'number') return String(v); throw lerr(`invalid argument #${n} to '${f}' (string expected, got ${luaTypeof(v)})`); };
 const worldOf = (self) => self.world || (R.current && R.current.owner && R.current.owner.world);
@@ -674,30 +675,31 @@ function computePath(path, start, goal) {
 }
 
 // ------------------------------------------------------------------ PhysicsService (collision groups)
-const groupsOf = (w) => (w.collisionGroups ||= { names: ['Default'], off: new Set() });
+const groupsOf = (w) => groupsOfWorld(w);
+const changedGroups = (self) => publishGroups(worldOf(self));
 defineBehavior('PhysicsService', {
   methods: methods({
-    RegisterCollisionGroup: (self, name) => { const g = groupsOf(worldOf(self)); const n = str(name, 1, 'RegisterCollisionGroup'); if (!g.names.includes(n)) g.names.push(n); worldOf(self).hooks.collisionGroupsChanged?.(); },
-    CreateCollisionGroup: (self, name) => { const g = groupsOf(worldOf(self)); const n = S(name); if (!g.names.includes(n)) g.names.push(n); return [g.names.indexOf(n)]; },
-    UnregisterCollisionGroup: (self, name) => { const g = groupsOf(worldOf(self)); g.names = g.names.filter((x) => x !== S(name)); },
-    RemoveCollisionGroup: (self, name) => { const g = groupsOf(worldOf(self)); g.names = g.names.filter((x) => x !== S(name)); },
-    RenameCollisionGroup: (self, a, b) => { const g = groupsOf(worldOf(self)); const i = g.names.indexOf(S(a)); if (i >= 0) g.names[i] = S(b); },
+    RegisterCollisionGroup: (self, name) => { const g = groupsOf(worldOf(self)); const n = str(name, 1, 'RegisterCollisionGroup'); if (!g.names.includes(n)) g.names.push(n); changedGroups(self); },
+    CreateCollisionGroup: (self, name) => { const g = groupsOf(worldOf(self)); const n = S(name); if (!g.names.includes(n)) g.names.push(n); changedGroups(self); return [g.names.indexOf(n)]; },
+    UnregisterCollisionGroup: (self, name) => { const g = groupsOf(worldOf(self)); g.names = g.names.filter((x) => x !== S(name)); changedGroups(self); },
+    RemoveCollisionGroup: (self, name) => { const g = groupsOf(worldOf(self)); g.names = g.names.filter((x) => x !== S(name)); changedGroups(self); },
+    RenameCollisionGroup: (self, a, b) => { const g = groupsOf(worldOf(self)); const i = g.names.indexOf(S(a)); if (i >= 0) g.names[i] = S(b); changedGroups(self); },
     CollisionGroupSetCollidable: (self, a, b, on) => {
       const g = groupsOf(worldOf(self));
       const k = [S(a), S(b)].sort().join('|');
       if (on) g.off.delete(k); else g.off.add(k);
-      worldOf(self).hooks.collisionGroupsChanged?.();
+      changedGroups(self);
     },
     CollisionGroupsAreCollidable: (self, a, b) => [!groupsOf(worldOf(self)).off.has([S(a), S(b)].sort().join('|'))],
-    GetRegisteredCollisionGroups: (self) => { const g = groupsOf(worldOf(self)); return [new LuaTable(g.names.map((n, i) => { const t = new LuaTable(); t.set('name', toByteStr(n)); t.set('id', i); t.set('mask', 0xffffffff); return t; }))]; },
+    GetRegisteredCollisionGroups: (self) => { const g = groupsOf(worldOf(self)); return [new LuaTable(listFromGroups(g).map(([n, mask], i) => { const t = new LuaTable(); t.set('name', toByteStr(n)); t.set('id', i); t.set('mask', mask); return t; }))]; },
     GetCollisionGroups: (self) => { const g = groupsOf(worldOf(self)); return [new LuaTable(g.names.map((n, i) => { const t = new LuaTable(); t.set('name', toByteStr(n)); t.set('id', i); return t; }))]; },
     IsCollisionGroupRegistered: (self, n) => [groupsOf(worldOf(self)).names.includes(S(n))],
     GetMaxCollisionGroups: () => [32],
     GetCollisionGroupId: (self, n) => [groupsOf(worldOf(self)).names.indexOf(S(n))],
     GetCollisionGroupName: (self, id) => [toByteStr(groupsOf(worldOf(self)).names[id] || '')],
     SetPartCollisionGroup: (self, part, name) => { part.set('CollisionGroup', S(name)); },
-    GetPartCollisionGroup: (self, part) => [0],
-    CollisionGroupContainsPart: (self, name, part) => [part.props.CollisionGroup === S(name)],
+    GetPartCollisionGroup: (self, part) => [Math.max(0, groupsOf(worldOf(self)).names.indexOf(part.props.CollisionGroup || 'Default'))],
+    CollisionGroupContainsPart: (self, name, part) => [(part.props.CollisionGroup || 'Default') === S(name)],
   }),
 });
 

@@ -8,7 +8,7 @@ import { CFrame, Vector3, Color3 } from '../engine/datatypes.js';
 import { E } from '../engine/enums.js';
 import { stepTweens } from '../engine/classes/services.js';
 import { stepAnimator } from '../engine/classes/animation.js';
-import { killHumanoid, equipTool, unequipTool, rootPartOf } from '../engine/classes/humanoid.js';
+import { killHumanoid, equipTool, unequipTool, rootPartOf, setState } from '../engine/classes/humanoid.js';
 import { Physics, initRapier } from './physics.js';
 import { CharacterController } from './controller.js';
 import { buildRig, applyStarterSettings, spawnCFrame } from './characters.js';
@@ -97,6 +97,8 @@ export class GameServer {
     h.bubbleChat = (part, msg, color) => { this.replicator.broadcast({ t: 'chat', bubble: this.replicator.idOf(part), m: msg, color: color ? color.Name : null }); };
     h.emitParticles = (em, n) => { this.replicator.broadcast({ t: 'cmd', k: 'emit', i: this.replicator.idOf(em), n }); };
     h.clearParticles = (em) => { this.replicator.broadcast({ t: 'cmd', k: 'clearfx', i: this.replicator.idOf(em) }); };
+    h.sit = (seat, hum) => this.seat(hum, seat);
+    h.unsit = (hum) => this.unseat(hum);
     h.setCore = () => {};
     h.getCore = () => undefined;
     const avatars = () => this.app?.avatars;
@@ -323,6 +325,48 @@ export class GameServer {
     player.fire('CharacterAppearanceLoaded', model);
     s.respawnAt = 0;
     this.emit('spawn', { player, model });
+  }
+
+  /** Seat:Sit(humanoid) / a player touching a seat: weld the character to the seat. */
+  seat(hum, seat) {
+    const w = this.world;
+    if (!hum || !seat || !hum.dm || !seat.dm || hum.state === 'Dead' || seat.props.Disabled === true) return;
+    if (hum.seat === seat) return;
+    if (seat.occupant && seat.occupant !== hum && seat.occupant.dm) return;
+    if (hum.seat) this.unseat(hum);
+    const root = rootPartOf(hum);
+    if (!root) return;
+    const r15 = !!hum.parent.findFirstChild('UpperTorso');
+    const hip = hum.props.HipHeight > 0 ? hum.props.HipHeight : 2;
+    const weld = new Instance('Weld', w);
+    weld.props.Name = 'SeatWeld';
+    weld.props.Part0 = seat;
+    weld.props.Part1 = root;
+    weld.props.C0 = new CFrame(0, seat.props.Size.Y / 2 + (r15 ? hip * 0.45 : 0) + root.props.Size.Y / 2 + (r15 ? 0 : 0.5), 0);
+    weld.props.C1 = CFrame.identity;
+    // like Roblox, the character moves onto the seat (not the seat to the character)
+    const target = seat.props.CFrame.mul(weld.props.C0).mul(weld.props.C1.inverse());
+    if (w.hooks.moveAssembly) w.hooks.moveAssembly(root, target); else root.rawSet('CFrame', target);
+    hum.seat = seat;
+    seat.occupant = hum;
+    seat.rawSet('Occupant', hum);
+    weld.setParent(seat);
+    hum.rawSet('Sit', true);
+    setState(hum, 'Seated');
+    hum.fire('Seated', true, seat);
+  }
+  unseat(hum, jump) {
+    const seat = hum && hum.seat;
+    if (!seat) return;
+    const root = rootPartOf(hum);
+    for (const c of seat.children.slice()) if (c.props.Name === 'SeatWeld' && (!root || c.props.Part1 === root)) c.destroy();
+    seat.occupant = null;
+    seat.rawSet('Occupant', null);
+    if (seat.ClassName === 'VehicleSeat') for (const k of ['Throttle', 'Steer', 'ThrottleFloat', 'SteerFloat']) seat.set(k, 0);
+    hum.seat = null;
+    hum.rawSet('Sit', false);
+    setState(hum, jump ? 'Jumping' : 'Running');
+    hum.fire('Seated', false, seat);
   }
 
   onHumanoidDied(hum) {

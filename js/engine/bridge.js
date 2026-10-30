@@ -3,7 +3,7 @@ import {
   LuaTable, LuaError, EMPTY, R, mkgen, call, runSync, toByteStr, fromByteStr, typeName, tostr, numToStr,
 } from '../luau/runtime.js';
 import { Instance, mergedBehavior } from './instance.js';
-import { classInfo, F } from './reflect.js';
+import { classInfo, F, isService } from './reflect.js';
 import { Signal, Connection } from './signal.js';
 import {
   Vector3, Vector2, CFrame, Color3, BrickColor, UDim, UDim2, Rect, Ray, Region3, Region3int16, NumberRange,
@@ -487,6 +487,8 @@ export function luaToProp(type, v, prop) {
 }
 
 export function luaGetMember(inst, k) {
+  // like luaL_checkstring, numbers are accepted as names: folder[1] == folder["1"]
+  if (typeof k === 'number') k = tostr(k);
   if (typeof k !== 'string') throw lerr(`invalid member access ${tostr(k)}`);
   const m = memberOf(inst, k);
   if (m) {
@@ -504,10 +506,13 @@ export function luaGetMember(inst, k) {
   }
   const name = fromByteStr(k);
   for (const c of inst.children) if (c.props.Name === name) return c;
+  // game.MarketplaceService works even when the service was never saved in the place
+  if (inst.ClassName === 'DataModel' && !inst.parent && inst.serviceFactory && isService(name)) { const svc = inst.serviceFactory(name); if (svc) return svc; }
   throw lerr(`${name} is not a valid member of ${inst.ClassName} "${inst.getFullName()}"`);
 }
 
 export function luaSetMember(inst, k, v) {
+  if (typeof k === 'number') k = tostr(k);
   if (typeof k !== 'string') throw lerr(`invalid member access ${tostr(k)}`);
   if (k === 'Parent') {
     if (v !== undefined && !(v instanceof Instance)) throw lerr(`Unable to assign property Parent. Instance expected, got ${luaTypeof(v)}`);

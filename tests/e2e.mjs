@@ -89,7 +89,7 @@ workspace.Terrain:FillBlock(CFrame.new(60, 4, 0), Vector3.new(20, 8, 20), Enum.M
     await page.waitForTimeout(800);
     const p0 = await hrp(page);
     ok(p0.y > 2 && p0.y < 6, 'character spawned on the spawn location', JSON.stringify(p0));
-    await page.locator('.viewport-canvas').click({ position: { x: 200, y: 200 } });
+    await page.locator('.viewport-canvas').click();
     await page.keyboard.down('w'); await page.waitForTimeout(800); await page.keyboard.up('w');
     const p1 = await hrp(page);
     ok(Math.hypot(p1.x - p0.x, p1.z - p0.z) > 3, 'W walks', `${JSON.stringify(p0)} -> ${JSON.stringify(p1)}`);
@@ -98,8 +98,9 @@ workspace.Terrain:FillBlock(CFrame.new(60, 4, 0), Vector3.new(20, 8, 20), Enum.M
     ok((await hrp(page)).y > p1.y + 2, 'Space jumps');
     const btn = await page.$('.game-ui:not(.edit) .TextButton');
     ok(!!btn, 'ScreenGui button rendered');
-    if (btn) { await btn.click(); await page.waitForTimeout(200); }
-    ok(await page.evaluate(() => [...document.querySelectorAll('.game-ui .TextButton')].some((e) => e.textContent.includes('Clicked!'))), 'GUI click runs the LocalScript');
+    if (btn) await btn.click();
+    const clicked = await page.waitForFunction(() => [...document.querySelectorAll('.game-ui .TextButton')].some((e) => e.textContent.includes('Clicked!')), null, { timeout: 5000 }).then(() => true, () => false);
+    ok(clicked, 'GUI click runs the LocalScript');
     await page.evaluate(() => window.bloxlab.session.server.world.exec('game.Players:GetPlayers()[1].Character:PivotTo(CFrame.new(60, 20, 0))'));
     await page.waitForTimeout(1500);
     const p2 = await hrp(page);
@@ -221,10 +222,13 @@ local l = Instance.new("LocalScript") l.Source = [[task.wait(0.5) game.Replicate
     ok(players.split(',').length === 2, 'guest joined the host', players);
     ok(await host.page.evaluate(() => /42$/.test(window.bloxlab.session.server.world.dm.findFirstChildOfClass('Workspace').getAttribute('Pinged') || '')), 'guest RemoteEvent reached the host server');
     await guest.page.bringToFront();
-    await guest.page.locator('.viewport-canvas').click({ position: { x: 200, y: 200 } });
+    await guest.page.locator('.viewport-canvas').click();
     const g0 = await hrp(guest.page);
-    await guest.page.keyboard.down('w'); await guest.page.waitForTimeout(900); await guest.page.keyboard.up('w');
-    await guest.page.waitForTimeout(500);
+    await guest.page.keyboard.down('w');
+    // hold W until the guest has walked (software rendering can starve one of the two pages of frames)
+    await guest.page.waitForFunction((p0) => { const r = window.bloxlab.session.active.character.findFirstChild('HumanoidRootPart').props.CFrame; return Math.hypot(r.X - p0.x, r.Z - p0.z) > 8; }, g0, { timeout: 10000 }).catch(() => {});
+    await guest.page.keyboard.up('w');
+    await guest.page.waitForTimeout(800);
     const g1 = await hrp(guest.page);
     const seen = await host.page.evaluate((name) => { const p = window.bloxlab.session.server.world.dm.findFirstChildOfClass('Players').children.find((x) => x.props.Name !== 'Host'); const c = p.props.Character.findFirstChild('HumanoidRootPart').props.CFrame; return { x: c.X, z: c.Z }; });
     ok(Math.hypot(g1.x - g0.x, g1.z - g0.z) > 5 && Math.hypot(seen.x - g1.x, seen.z - g1.z) < 1.5, 'guest movement replicates to the host', `${JSON.stringify(g1)} vs ${JSON.stringify(seen)}`);

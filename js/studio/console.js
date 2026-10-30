@@ -96,6 +96,7 @@ export class HostConsole {
       return;
     }
     const srv = s.server;
+    if (!s.running) { this.playersEl.replaceChildren(h('div', { class: 'muted small', text: 'Starting…' })); this.statsEl.replaceChildren(); return; }
     if (!srv) {
       this.playersEl.replaceChildren(h('div', { class: 'muted small', text: 'You joined someone else\'s game.' }));
       const c = s.active;

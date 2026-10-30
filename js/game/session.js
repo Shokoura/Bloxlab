@@ -201,7 +201,8 @@ export class PlaySession {
     const t = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
     if (this.mode === 'run') return `Running · ${t}`;
     if (this.mode === 'join') return `Connected · ${this.active ? this.active.statusText() : ''}`;
-    const remote = this.server ? [...this.server.replicator.conns.values()].filter((c) => !c.transport.local).length : 0;
+    if (!this.running) return 'Starting…';
+    const remote = this.server && this.server.replicator ? [...this.server.replicator.conns.values()].filter((c) => !c.transport.local).length : 0;
     return `Playing · ${t}${this.clients.length > 1 ? ` · ${this.clients.length} local players` : ''}${remote ? ` · ${remote} remote` : ''}${this.hosts.length ? ' · hosting' : ''}`;
   }
 }

@@ -7,6 +7,9 @@ import { readXml, writeXml } from '../formats/xml.js';
 import { decodeAttributes, encodeAttributes, decodeTags, encodeTags } from '../formats/attributes.js';
 import { Vector3, CFrame, Color3, BrickColor, UDim2, Font } from './datatypes.js';
 import { enumFromValue, EnumItem, E } from './enums.js';
+import { decodeCollisionGroupData } from './collision-groups.js';
+
+const toBytes = (v) => (typeof v === 'string' ? Uint8Array.from(v, (c) => c.charCodeAt(0) & 255) : v);
 
 // Services every place starts with (Studio creates these).
 export const DEFAULT_SERVICES = ['Workspace', 'Players', 'Lighting', 'MaterialService', 'ReplicatedFirst', 'ReplicatedStorage', 'ServerScriptService', 'ServerStorage', 'StarterGui', 'StarterPack', 'StarterPlayer', 'Teams', 'SoundService', 'Chat', 'TextChatService', 'LocalizationService', 'TestService'];
@@ -165,6 +168,9 @@ export function rawToInstances(rawRoots, world) {
       inst.props[canon] = rawValueToEngine(p.type, t, v);
     }
     if (!ri.props.has('Name')) inst.props.Name = cn;
+    if (cn === 'Workspace' && inst.extra && inst.extra.has('CollisionGroupData')) {
+      try { const list = decodeCollisionGroupData(toBytes(inst.extra.get('CollisionGroupData').v)); if (list && list.length) inst.props.CollisionGroupsList = list; } catch { /* keep defaults */ }
+    }
     if (cn === 'Terrain' && inst.attrs && inst.attrs.has(TERRAIN_FILLS_ATTR)) {
       inst.props.Voxels = decodeTerrainFills(inst.attrs.get(TERRAIN_FILLS_ATTR));
       inst.attrs.delete(TERRAIN_FILLS_ATTR);

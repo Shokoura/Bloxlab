@@ -11,6 +11,8 @@ import { invokeLua, callbackReady, isServerOnlyScript, PROTOCOL } from './common
 
 const HIDDEN_SERVICES = new Set(['ServerScriptService', 'ServerStorage']);
 const SKIP_PROPS = new Set(['CurrentCamera']);
+// what a player's scripts may change on parts they own (vehicles, physics controllers)
+const OWNED_CLASSES = /Constraint$|^Body|^(VehicleSeat|LinearVelocity|AngularVelocity|VectorForce|LineForce|Torque|AlignPosition|AlignOrientation)$/;
 
 class Conn {
   constructor(id, transport) {
@@ -223,7 +225,7 @@ export class ServerReplicator {
     if (typeof v === 'function') return;
     const msg = { t: 'p', i: id, n: name, v: this.enc(v) };
     const key = `${id}\u0000${name}`;
-    this.each(scope, (c) => { c.props.delete(key); c.props.set(key, msg); });
+    this.each(scope, (c) => { c.props.delete(key); c.props.set(key, msg); }, this.propOrigin || 0);
   }
   onAttr(inst, name) {
     const scope = scopeOf(inst);
@@ -243,9 +245,14 @@ export class ServerReplicator {
    * The server moved a player's character (teleport, PivotTo, seat...). The owning client must take
    * the new pose, and its in-flight (older) poses are ignored until it acknowledges this teleport.
    */
+  /** True when this part's assembly is a character walked by its player's client. */
+  clientDriven(part) {
+    const info = this.session.physics?.parts.get(part);
+    return !!(info && info.asm && info.asm.remoteDriven);
+  }
   serverMovedCharacter(root) {
     const model = root.parent;
-    if (!model || !this.session.physics?.remoteOwnedModels?.has(model)) return;
+    if (!model || !this.clientDriven(root)) return;
     const pl = this.session.playerFromCharacter?.(model);
     const c = pl && this.connOf(pl);
     if (!c || !c.ready) return;
@@ -284,7 +291,7 @@ export class ServerReplicator {
         const scope = scopeOf(r);
         if (scope === false) continue;
         let owner = null;
-        if (r.parent && this.session.physics?.remoteOwnedModels?.has(r.parent)) { const pl = this.session.playerFromCharacter?.(r.parent); owner = pl ? this.connOf(pl) : null; }
+        if (this.clientDriven(r)) { const pl = this.session.playerFromCharacter?.(r.parent); owner = pl ? this.connOf(pl) : null; }
         for (const c of this.conns.values()) if (c.ready && c.id !== origin && c !== owner && visible(scope, c)) c.poses.add(r);
       }
     }
@@ -392,6 +399,33 @@ export class ServerReplicator {
         if (dd && dd.ClassName === 'DragDetector') dd.fire(m.k === 's' ? 'DragStart' : m.k === 'e' ? 'DragEnd' : 'DragContinue', P);
         break;
       }
+      case 'sit': {
+        const seat = this.byId.get(m.i);
+        const ch = P.props.Character;
+        const hum = ch && ch.findFirstChildOfClass('Humanoid');
+        const root = ch && (ch.findFirstChild('HumanoidRootPart') || ch.props.PrimaryPart);
+        if (seat && hum && root && (seat.ClassName === 'Seat' || seat.ClassName === 'VehicleSeat') && seat.props.CFrame.Position.sub(root.props.CFrame.Position).Magnitude < 12) this.session.seat?.(hum, seat);
+        break;
+      }
+      case 'unsit': { const ch = P.props.Character; const hum = ch && ch.findFirstChildOfClass('Humanoid'); if (hum && hum.seat) this.session.unseat?.(hum, true); break; }
+      case 'drive': {
+        const ch = P.props.Character;
+        const hum = ch && ch.findFirstChildOfClass('Humanoid');
+        const seat = hum && hum.seat;
+        if (seat && seat.ClassName === 'VehicleSeat') {
+          const th = Math.max(-1, Math.min(1, Number(m.th) || 0)), st = Math.max(-1, Math.min(1, Number(m.st) || 0));
+          seat.set('ThrottleFloat', th); seat.set('Throttle', Math.round(th)); seat.set('SteerFloat', st); seat.set('Steer', Math.round(st));
+        }
+        break;
+      }
+      case 'op': {
+        // a property changed by the player's scripts on something the server let them own
+        const inst = this.byId.get(m.i);
+        if (!inst || !this.owns(P, inst) || typeof m.n !== 'string') break;
+        this.propOrigin = conn.id;
+        try { inst.set(m.n, this.dec(m.v)); } catch { /* invalid value */ } finally { this.propOrigin = 0; }
+        break;
+      }
       case 'chat': this.session.onChat?.(conn, String(m.m || '').slice(0, 200)); break;
       case 'reset': { const ch = P.props.Character; const hum = ch && ch.findFirstChildOfClass('Humanoid'); if (hum) killHumanoid(hum); break; }
       case 'log': this.session.onClientLog?.(conn, m); break;
@@ -401,12 +435,31 @@ export class ServerReplicator {
     }
   }
 
+  /** Network ownership: the parts behind an instance belong to this player (SetNetworkOwner or driving it). */
+  owns(player, inst) {
+    const parts = [];
+    if (inst.isA('BasePart')) parts.push(inst);
+    else if (inst.parent && inst.parent.isA && inst.parent.isA('BasePart')) parts.push(inst.parent);
+    for (const k of ['Attachment0', 'Attachment1']) { const a = inst.props[k]; if (a && a.parent && a.parent.isA && a.parent.isA('BasePart')) parts.push(a.parent); }
+    if (!parts.length || !OWNED_CLASSES.test(inst.ClassName)) return false;
+    const ph = this.session.physics;
+    const ch = player.props.Character;
+    const hum = ch && ch.findFirstChildOfClass('Humanoid');
+    for (const p of parts) {
+      if (p.networkOwner === player) return true;
+      const asm = ph && ph.parts.get(p)?.asm;
+      if (!asm) continue;
+      for (const q of asm.parts) { if (q.networkOwner === player) return true; if (hum && hum.seat === q) return true; }
+    }
+    return false;
+  }
+
   applyCharacter(conn, m) {
     const ch = conn.player.props.Character;
     if (!ch || !ch.dm || (m.c !== undefined && this.ids.get(ch) !== m.c)) return;
     const hrp = ch.findFirstChild('HumanoidRootPart') || ch.props.PrimaryPart;
     const hum = ch.findFirstChildOfClass('Humanoid');
-    if (hrp && m.d && (m.q || 0) >= (conn.tpSeq || 0)) {
+    if (hrp && m.d && (m.q || 0) >= (conn.tpSeq || 0) && this.clientDriven(hrp)) {
       this.origin = conn.id;
       try {
         const cf = decodePose(m.d);

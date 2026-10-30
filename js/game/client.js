@@ -18,6 +18,38 @@ import { Input } from './input.js';
 import { DefaultAnimator } from './animate.js';
 import { SoundSystem } from './sound.js';
 import { toByteStr } from '../luau/runtime.js';
+import { libTable } from '../luau/stdlib.js';
+import { setState } from '../engine/classes/humanoid.js';
+
+// what our scripts may change on vehicles the server lets us drive (checked again by the server)
+const OWNED_CLASSES = /Constraint$|^Body|^(VehicleSeat|LinearVelocity|AngularVelocity|VectorForce|LineForce|Torque|AlignPosition|AlignOrientation)$/;
+
+const PLAYER_MODULE = `local PlayerModule = {}
+PlayerModule.__index = PlayerModule
+local controls = require(script:WaitForChild("ControlModule"))
+local cameras = require(script:WaitForChild("CameraModule"))
+function PlayerModule:GetControls() return controls end
+function PlayerModule:GetCameras() return cameras end
+function PlayerModule:GetClickToMoveController() return controls end
+return setmetatable({}, PlayerModule)`;
+const CONTROL_MODULE = `local native = __BloxlabControls
+local ControlModule = {}
+ControlModule.__index = ControlModule
+function ControlModule:GetMoveVector() return native.moveVector() end
+function ControlModule:Enable(enable) native.setEnabled(enable ~= false) end
+function ControlModule:Disable() native.setEnabled(false) end
+function ControlModule:GetActiveController() return self end
+function ControlModule:GetIsJumping() return native.isJumping() end
+function ControlModule:IsEnabled() return native.isEnabled() end
+function ControlModule:SelectComputerMovementModule() end
+function ControlModule:SelectTouchModule() end
+return setmetatable({}, ControlModule)`;
+const CAMERA_MODULE = `local native = __BloxlabControls
+local CameraModule = {}
+CameraModule.__index = CameraModule
+function CameraModule:SetIsMouseLocked(on) native.setMouseLock(on) end
+function CameraModule:GetCameraControlChoice() return Enum.ComputerCameraMovementMode.Classic end
+return setmetatable({}, CameraModule)`;
 
 let clientSeq = 0;
 
@@ -92,7 +124,19 @@ export class ClientRuntime {
       if (sps) for (const c of sps.children) { const cc = c.clone(false, null, w); if (cc) { cc.parent = ps; ps.children.push(cc); } }
       ps.setParent(lp);
     }
-    this.unobserve = w.observe({ moved: (inst, oldParent) => this.toolMoved(inst, oldParent), added: (inst) => this.toolMoved(inst, null), removed: (inst, oldParent) => this.toolMoved(inst, oldParent) });
+    this.ownedChanges = new Map();
+    this.unobserve = w.observe({
+      moved: (inst, oldParent) => this.toolMoved(inst, oldParent),
+      added: (inst) => { this.toolMoved(inst, null); inst.forTree((d) => this.seatWeldChanged(d, true)); },
+      removed: (inst, oldParent) => { this.toolMoved(inst, oldParent); inst.forTree((d) => this.seatWeldChanged(d, false)); },
+      propChanged: (inst, name) => {
+        // vehicle / physics settings our scripts change on parts the server lets us drive
+        if (this.replicator.applying || inst.netId === undefined || !OWNED_CLASSES.test(inst.ClassName)) return;
+        this.ownedChanges.set(`${inst.netId}\u0000${name}`, [inst, name]);
+      },
+    });
+    w.dm.forTree((d) => this.seatWeldChanged(d, true));
+    this.installPlayerModule();
     w.start();
     // players already in the game when we joined
     for (const p of this.service('Players').children) if (p.ClassName === 'Player' && p.props.Character) this.onCharacterChanged(p, p.props.Character);
@@ -108,8 +152,9 @@ export class ClientRuntime {
     h.kick = (player, msg) => { if (player === w.localPlayer) this.onKicked(msg); };
     h.sendChat = (text) => this.chat(text);
     h.cameraYaw = () => (this.camera ? this.camera.yaw : 0);
-    h.sit = (seat, hum) => { if (hum && hum.controller) hum.controller.sit(seat); };
-    h.unsit = (hum) => { if (hum && hum.controller) hum.controller.unsit(); };
+    // the server owns seating; our character asks for it
+    h.sit = (seat, hum) => { if (hum && hum === this.humanoid && seat.netId !== undefined) this.replicator.send({ t: 'sit', i: seat.netId }); };
+    h.unsit = (hum) => { if (hum && hum === this.humanoid && hum.seat) this.replicator.send({ t: 'unsit' }); };
     h.humanoidDied = (hum) => { if (hum === this.humanoid) this.emit('died'); };
     h.trackEvent = (track, kind) => this.syncTrack(track, kind);
     h.purchasePrompt = (player, id, kind) => { if (player === w.localPlayer || !player) this.hud?.purchasePrompt(id, kind); };
@@ -118,6 +163,50 @@ export class ClientRuntime {
     h.applyDescription = (hum, desc) => (avatars() ? avatars().applyDescription(w, hum, desc) : Promise.resolve());
     h.viewportSize = () => (this.viewport ? this.viewport.size : { w: 1280, h: 720 });
     h.guiInset = () => ({ top: 58, left: 0 });
+  }
+
+  /** Roblox's PlayerModule (ControlModule / CameraModule) for scripts that require it. */
+  installPlayerModule() {
+    const w = this.world, lp = w.localPlayer;
+    const ps = lp && lp.findFirstChildOfClass('PlayerScripts');
+    if (!ps || ps.findFirstChild('PlayerModule')) return;
+    const rt = this;
+    w.vm.globals.set('__BloxlabControls', libTable({
+      moveVector: () => [rt.moveVector || Vector3.zero],
+      setEnabled: (on) => { rt.controlsDisabled = !on; },
+      isEnabled: () => [!rt.controlsDisabled],
+      isJumping: () => [!!rt.jumpHeld],
+      setMouseLock: (on) => { if (rt.camera) rt.camera.shiftLock = !!on; },
+    }, '__BloxlabControls'));
+    const mod = (name, src, parent) => { const m = new Instance('ModuleScript', w); m.props.Name = name; m.props.Source = src; m.setParent(parent); return m; };
+    const pm = mod('PlayerModule', PLAYER_MODULE, ps);
+    mod('ControlModule', CONTROL_MODULE, pm);
+    mod('CameraModule', CAMERA_MODULE, pm);
+  }
+
+  /** SeatWelds come from the server: they tell us who is sitting where. */
+  seatWeldChanged(d, added) {
+    if (d.ClassName !== 'Weld' || d.props.Name !== 'SeatWeld') return;
+    const seat = d.props.Part0, root = d.props.Part1;
+    const hum = root && root.parent && root.parent.findFirstChildOfClass && root.parent.findFirstChildOfClass('Humanoid');
+    if (!hum) return;
+    const cam = hum === this.humanoid && this.dm.findFirstChildOfClass('Workspace').props.CurrentCamera;
+    if (added && seat) {
+      hum.seat = seat;
+      seat.occupant = hum;
+      setState(hum, 'Seated');
+      hum.fire('Seated', true, seat);
+      // like Roblox's default camera scripts: driving a VehicleSeat makes it the camera subject
+      if (cam && seat.ClassName === 'VehicleSeat' && cam.props.CameraSubject === hum) cam.rawSet('CameraSubject', seat);
+    } else if (!added && hum.seat) {
+      const old = hum.seat;
+      hum.seat = null;
+      if (old.occupant === hum) old.occupant = null;
+      if (cam && cam.props.CameraSubject === old) cam.rawSet('CameraSubject', hum);
+      hum.state = 'Jumping';
+      if (hum.controller) { hum.controller.vy = 30; hum.controller.grounded = false; }
+      hum.fire('Seated', false, old);
+    }
   }
 
   onCharacterChanged(player, model) {
@@ -334,13 +423,42 @@ export class ClientRuntime {
       this.effects?.update(dt);
     }
     this.sound.update(dt);
+    this.seatedInput();
+    this.flushOwned();
     this.sendPose(dt);
     this.replicator.flush();
+  }
+
+  /** While seated: jump asks to stand up, a VehicleSeat gets our throttle and steering. */
+  seatedInput() {
+    const hum = this.humanoid;
+    if (!hum || !hum.seat) { this.lastDrive = null; return; }
+    if (hum.jumpRequest) {
+      hum.jumpRequest = false;
+      const canJump = hum.props.UseJumpPower ? (hum.props.JumpPower ?? 50) > 0 : (hum.props.JumpHeight ?? 7.2) > 0;
+      if (canJump && !this.unsitSent) { this.unsitSent = true; this.replicator.send({ t: 'unsit' }); setTimeout(() => { this.unsitSent = false; }, 500); }
+    }
+    if (hum.seat.ClassName === 'VehicleSeat') {
+      const mv = this.moveVector || Vector3.zero;
+      const key = `${(-mv.Z).toFixed(2)},${mv.X.toFixed(2)}`;
+      if (key !== this.lastDrive) { this.lastDrive = key; this.replicator.send({ t: 'drive', th: -mv.Z, st: mv.X }); }
+    }
+  }
+  flushOwned() {
+    if (!this.ownedChanges || !this.ownedChanges.size) return;
+    for (const [inst, name] of this.ownedChanges.values()) {
+      if (!inst.dm || inst.netId === undefined) continue;
+      this.replicator.send({ t: 'op', i: inst.netId, n: name, v: this.replicator.enc(inst.props[name]) });
+    }
+    this.ownedChanges.clear();
   }
 
   sendPose(dt) {
     const ch = this.character, hum = this.humanoid;
     if (!ch || !ch.dm || !hum || hum.state === 'Dead' || ch.netId === undefined) return;
+    // riding something (seat / vehicle): the server simulates it
+    const rootInfo = this.physics.parts.get(rootPartOf(hum));
+    if (hum.seat || (rootInfo && rootInfo.asm && rootInfo.asm.character !== hum.controller)) return;
     this.poseAcc += dt;
     const interval = this.replicator.transport.local ? 0 : 1 / 30;
     if (this.poseAcc < interval) return;

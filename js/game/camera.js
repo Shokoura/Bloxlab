@@ -44,6 +44,7 @@ export class CameraController {
 
   /** Mouse / touch / gamepad rotation in pixels (or equivalent). */
   rotate(dx, dy) {
+    this.lastManual = performance.now();
     const sens = SENS * (this.rt.service('UserInputService').props.MouseDeltaSensitivity ?? 1);
     this.yaw -= dx * sens;
     this.pitch = clamp(this.pitch - dy * sens, -1.39, 1.39);
@@ -105,6 +106,21 @@ export class CameraController {
       cam.rawSet('Focus', new CFrame(focus.X, focus.Y, focus.Z));
       return;
     }
+    if (subject !== this.lastSubject) {
+      // pull back for vehicles so the camera starts outside them
+      if (subject && subject.ClassName === 'VehicleSeat') this.targetZoom = Math.min(max, Math.max(this.targetZoom, 24));
+      this.lastSubject = subject;
+    }
+    // vehicle camera: swing in behind a VehicleSeat unless the player turned the camera recently
+    if (subject && subject.ClassName === 'VehicleSeat' && type === 'Custom' && performance.now() - (this.lastManual || 0) > 1500) {
+      const look = subject.props.CFrame.LookVector;
+      if (Math.hypot(look.X, look.Z) > 0.2) {
+        let d = Math.atan2(-look.X, -look.Z) - this.yaw;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        this.yaw += d * Math.min(1, dt * 2.5);
+      }
+    }
     const fp = this.zoom <= min + 0.05 && min <= 0.6;
     this.setFirstPerson(fp);
     const rot = CFrame.fromEulerYXZ(this.pitch, this.yaw, 0);
@@ -118,7 +134,8 @@ export class CameraController {
       // keep the camera out of walls
       const dir = pos.sub(focus);
       const ch = this.rt.character;
-      const hit = dir.Magnitude > 0.5 ? raycastWorld(this.rt.service('Workspace'), focus, dir, (p) => p.props.CanCollide !== false && (p.props.Transparency ?? 0) < 0.95 && !(ch && p.isDescendantOf(ch)) && !(subject && subject.isA && subject.isA('BasePart') && p === subject)) : null;
+      const ray = this.rt.world.hooks.raycast || ((o, d, f) => raycastWorld(this.rt.service('Workspace'), o, d, f));
+      const hit = dir.Magnitude > 0.5 ? ray(focus, dir, (p) => p.props.CanCollide !== false && (p.props.Transparency ?? 0) < 0.95 && !(ch && p.isDescendantOf(ch)) && !(subject && subject.isA && subject.isA('BasePart') && p === subject)) : null;
       if (hit) pos = focus.add(dir.Unit.mul(Math.max(0.5, hit.distance - 0.6)));
     }
     cam.rawSet('CFrame', CFrame.fromPosRot(pos.X, pos.Y, pos.Z, rot.r));

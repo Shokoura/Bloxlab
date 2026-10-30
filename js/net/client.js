@@ -99,6 +99,7 @@ export class ClientReplicator {
   }
 
   applyProp(inst, name, v) {
+    this.applying = true;
     try {
       if (name === 'CFrame' && inst.isA('BasePart')) { inst.rawSet('CFrame', v); return; }
       const acc = inst.beh.props[name];
@@ -106,7 +107,7 @@ export class ClientReplicator {
       else inst.rawSet(name, v);
     } catch {
       inst.rawSet(name, v);
-    }
+    } finally { this.applying = false; }
   }
 
   buildInit(m) {

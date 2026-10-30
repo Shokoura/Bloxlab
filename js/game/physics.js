@@ -9,6 +9,7 @@ import { materialPhysics } from '../engine/bridge.js';
 import { partShape } from '../engine/geom.js';
 import { partMass } from '../engine/classes/parts.js';
 import { terrainSurfaces, terrainShapes } from '../render/terrain.js';
+import { groupsOfWorld, groupsFromList } from '../engine/collision-groups.js';
 
 let ready = null;
 export const initRapier = () => (ready ||= RAPIER.init());
@@ -17,6 +18,10 @@ const RIGID_JOINTS = new Set(['Weld', 'ManualWeld', 'Snap', 'Glue', 'ManualGlue'
 const PHYS_PROPS = new Set(['Anchored', 'CanCollide', 'CanTouch', 'Size', 'Shape', 'shape', 'CollisionGroup', 'Massless', 'CustomPhysicalProperties', 'Material', 'RootPriority']);
 const JOINT_PROPS = new Set(['Part0', 'Part1', 'Enabled', 'C0', 'C1', 'Attachment0', 'Attachment1']);
 const MOVER_CLASSES = new Set(['BodyVelocity', 'BodyPosition', 'BodyGyro', 'BodyForce', 'BodyAngularVelocity', 'BodyThrust', 'VectorForce', 'LinearVelocity', 'AngularVelocity', 'AlignPosition', 'AlignOrientation', 'Torque', 'LineForce']);
+let SERVO_K = 5e4, SERVO_D = 0.1;
+export const tuneServo = (k, d) => { SERVO_K = k; SERVO_D = d; };
+// (LimitsEnabled is not live: Rapier joints cannot drop limits again, so that rebuilds the joint)
+const LIVE_CONSTRAINT_PROPS = new Set(['ActuatorType', 'AngularVelocity', 'MotorMaxTorque', 'MotorMaxAcceleration', 'TargetAngle', 'AngularSpeed', 'ServoMaxTorque', 'AngularResponsiveness', 'UpperAngle', 'LowerAngle', 'Restitution', 'Velocity', 'MotorMaxForce', 'TargetPosition', 'Speed', 'ServoMaxForce', 'LinearResponsiveness', 'UpperLimit', 'LowerLimit', 'Visible', 'Color', 'Thickness', 'Radius', 'Coils', 'MaxForce']);
 const JOINT_CONSTRAINTS = new Set(['HingeConstraint', 'BallSocketConstraint', 'RopeConstraint', 'SpringConstraint', 'PrismaticConstraint', 'RodConstraint', 'CylindricalConstraint', 'UniversalConstraint', 'SlidingBallConstraint']);
 
 const quat = (cf) => { const [x, y, z, w] = cf.toQuaternion(); return { x, y, z, w }; };
@@ -70,6 +75,8 @@ export class Physics {
     this.dirty = new Set();
     this.constraints = new Set(); // non-rigid constraint instances
     this.constraintJoints = new Map(); // constraint -> rapier joint
+    this.jointBodies = new Map(); // constraint -> [asm0, asm1]
+    this.constraintParams = new Set(); // constraints whose motor / limit settings changed
     this.movers = new Set();
     this.touching = new Map(); // `${a.id}|${b.id}` -> count
     this.touchList = new Map(); // part -> Set(part)
@@ -137,6 +144,11 @@ export class Physics {
   onProp(inst, name, opts) {
     if (opts && opts.physics) return;
     if (inst.ClassName === 'Terrain') { if (name === 'SmoothGrid' || name === 'Voxels') this.terrainDirty = true; return; }
+    if (inst === this.ws && name === 'CollisionGroupsList') {
+      this.world.collisionGroups = groupsFromList(inst.props.CollisionGroupsList || []);
+      for (const p of this.parts.keys()) this.dirty.add(p);
+      return;
+    }
     if (this.parts.has(inst)) {
       if (PHYS_PROPS.has(name)) this.dirty.add(inst);
       else if (name === 'CFrame') {
@@ -152,7 +164,12 @@ export class Physics {
       if (JOINT_PROPS.has(name)) { inst.offset = null; this.indexJoint(inst, this.inWorkspace(inst)); }
       return;
     }
-    if (JOINT_CONSTRAINTS.has(inst.ClassName)) { this.constraintsDirty = true; this.removeConstraintJoint(inst); }
+    if (JOINT_CONSTRAINTS.has(inst.ClassName)) {
+      // motor / servo / limit settings change every frame in vehicle scripts: update the joint in place
+      if (LIVE_CONSTRAINT_PROPS.has(name) && this.constraintJoints.has(inst)) { this.constraintParams.add(inst); return; }
+      this.constraintsDirty = true;
+      this.removeConstraintJoint(inst);
+    }
   }
 
   // ------------------------------------------------------------ hooks for engine code
@@ -171,9 +188,25 @@ export class Physics {
       isGrounded: (part) => { const a = this.asmOf(part); return !!a && a.kind === 'fixed'; },
       jointChanged: (j) => this.onProp(j, j.ClassName === 'Motor6D' ? 'Transform' : 'C0'),
       collisionGroupsChanged: () => { for (const p of this.parts.keys()) this.dirty.add(p); },
+      raycast: (origin, dir, filter) => this.raycast(origin, dir, filter),
     };
     this.hookNames = h;
     Object.assign(this.world.hooks, h);
+  }
+  /** Ray against every part collider (and terrain); filter(part) -> include. */
+  raycast(origin, dir, filter) {
+    if (this.dirty.size) this.flushDirty();
+    const len = dir.Magnitude;
+    if (!(len > 1e-9)) return null;
+    const unit = dir.div(len);
+    const ray = new RAPIER.Ray(v3(origin), v3(unit));
+    const hit = this.rw.castRayAndGetNormal(ray, len, true, undefined, undefined, undefined, undefined, (c) => {
+      const p = this.byCollider.get(c.handle);
+      return !!p && !c.__capsule && (!filter || filter(p));
+    });
+    if (!hit) return null;
+    const toi = hit.timeOfImpact ?? hit.toi;
+    return { part: this.byCollider.get(hit.collider.handle), position: origin.add(unit.mul(toi)), normal: V(hit.normal), distance: toi };
   }
   asmOf(part) {
     if (this.dirty.size) this.flushDirty();
@@ -311,13 +344,15 @@ export class Physics {
   buildAssembly(parts) {
     const root = this.chooseRoot(parts);
     const anyAnchored = parts.some((p) => p.props.Anchored);
-    const hum = !anyAnchored && root.props.Name === 'HumanoidRootPart' ? root.parent.findFirstChildOfClass('Humanoid') : null;
-    const asm = { root, parts: new Set(parts), body: null, kind: anyAnchored ? 'fixed' : 'dynamic', character: null, humanoid: hum, colliders: [] };
+    // a character welded to a seat rides with it: the seat's assembly is simulated, not walked
+    const seated = parts.some((p) => p.ClassName === 'Seat' || p.ClassName === 'VehicleSeat');
+    const hum = !anyAnchored && !seated && root.props.Name === 'HumanoidRootPart' ? root.parent.findFirstChildOfClass('Humanoid') : null;
+    const asm = { root, parts: new Set(parts), body: null, kind: anyAnchored ? 'fixed' : 'dynamic', character: null, humanoid: hum, colliders: [], seated };
     const offsets = this.computeOffsets(asm);
     const rootCF = root.props.CFrame;
     asm.rootCF = rootCF;
     if (hum && hum.controller) { asm.kind = 'kinematic'; asm.character = hum.controller; }
-    if (this.remoteOwnedModels && this.remoteOwnedModels.has(root.parent)) asm.kind = 'kinematic';
+    if (!anyAnchored && !seated && this.remoteOwnedModels && this.remoteOwnedModels.has(root.parent)) { asm.kind = 'kinematic'; asm.remoteDriven = true; }
     // on clients, replicated assemblies follow the server's poses (except our own character)
     if (this.role === 'client' && asm.kind === 'dynamic' && !asm.character && parts.some((p) => p.netId !== undefined)) asm.kind = 'kinematic';
     const desc = asm.kind === 'fixed' ? RAPIER.RigidBodyDesc.fixed() : asm.kind === 'kinematic' ? RAPIER.RigidBodyDesc.kinematicPositionBased() : RAPIER.RigidBodyDesc.dynamic();
@@ -352,7 +387,7 @@ export class Physics {
 
   groupsFor(p) {
     const w = this.world;
-    const groups = w.collisionGroups || { names: ['Default'], off: new Set() };
+    const groups = groupsOfWorld(w);
     const name = p.props.CollisionGroup || 'Default';
     let idx = groups.names.indexOf(name);
     if (idx < 0 || idx > 15) idx = 0;
@@ -366,7 +401,8 @@ export class Physics {
     const s = P.Size;
     const canCollide = P.CanCollide !== false;
     const canTouch = P.CanTouch !== false;
-    if (!canCollide && !canTouch) return [];
+    // non-colliding, non-touching parts still get a query-only sensor so raycasts can hit them
+    const queryOnly = !canCollide && !canTouch;
     const shape = partShape(p);
     let desc;
     const hx = Math.max(0.025, s.X / 2), hy = Math.max(0.025, s.Y / 2), hz = Math.max(0.025, s.Z / 2);
@@ -386,11 +422,11 @@ export class Physics {
     desc.setDensity(P.Massless ? 0.0001 : Math.max(0.01, pp.Density));
     desc.setFriction(pp.Friction).setRestitution(pp.Elasticity * 0.5);
     desc.setFrictionCombineRule(RAPIER.CoefficientCombineRule.Average).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Average);
-    desc.setCollisionGroups(this.groupsFor(p));
+    desc.setCollisionGroups(queryOnly ? 0 : this.groupsFor(p));
     const isCharacterLimb = !!asm.character;
     if (!canCollide) desc.setSensor(true);
     else if (isCharacterLimb) desc.setSolverGroups(0); // limbs detect touches; the capsule does the colliding
-    if (canTouch) desc.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS).setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.ALL);
+    if (canTouch && !queryOnly) desc.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS).setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.ALL);
     const c = this.rw.createCollider(desc, asm.body);
     c.__limb = isCharacterLimb;
     asm.colliders.push(c);
@@ -413,6 +449,7 @@ export class Physics {
       // carry the velocity over to whatever assembly gets rebuilt
       if (asm.body && asm.kind === 'dynamic') { try { const lv = asm.body.linvel(), av = asm.body.angvel(); p.props.AssemblyLinearVelocity = V(lv); p.props.AssemblyAngularVelocity = V(av); } catch { /* freed */ } }
     }
+    this.dropJointsOf(asm);
     if (asm.body) { try { this.rw.removeRigidBody(asm.body); } catch { /* ignore */ } }
     asm.body = null;
   }
@@ -443,6 +480,60 @@ export class Physics {
   removeConstraintJoint(c) {
     const j = this.constraintJoints.get(c);
     if (j) { try { this.rw.removeImpulseJoint(j, true); } catch { /* ignore */ } this.constraintJoints.delete(c); }
+    this.jointBodies.delete(c);
+  }
+  /** Joints attached to an assembly's body die with it; they are recreated on the next step. */
+  dropJointsOf(asm) {
+    for (const [c, [a0, a1]] of this.jointBodies) {
+      if (a0 !== asm && a1 !== asm) continue;
+      this.constraintJoints.delete(c);
+      this.jointBodies.delete(c);
+      this.constraintsDirty = true;
+    }
+  }
+  /**
+   * Roblox's solver copes with a light part (steering knuckle) carrying a heavy one (wheel); Rapier's
+   * needs help: more iterations for jointed bodies and no more than 1:8 mass ratios across a joint.
+   */
+  stiffenJoint(a, b) {
+    for (const x of [a, b]) {
+      if (!x.body || x.kind !== 'dynamic') continue;
+      try { x.body.setAdditionalSolverIterations(6); } catch { /* older Rapier */ }
+      if (x.baseMass === undefined) x.baseMass = x.body.mass();
+    }
+    if (!a.body || !b.body || a.kind !== 'dynamic' || b.kind !== 'dynamic') return;
+    const [light, heavy] = a.baseMass < b.baseMass ? [a, b] : [b, a];
+    const want = heavy.baseMass / 8;
+    if (light.baseMass < want && want - light.baseMass > (light.extraMass || 0)) {
+      light.extraMass = want - light.baseMass;
+      try { light.body.setAdditionalMass(light.extraMass, true); } catch { /* older Rapier */ }
+    }
+  }
+
+  /** Motor, servo and limit settings of a Roblox constraint -> its Rapier joint. */
+  applyConstraintParams(c, j) {
+    const P = c.props;
+    const act = P.ActuatorType ? P.ActuatorType.Name : 'None';
+    const gain = (t) => (t > 0 ? Math.min(60, 4 + Math.log10(1 + t) * 5) : 0);
+    try {
+      if (c.ClassName === 'HingeConstraint') {
+        // (huge "no limit" values would silently disable Rapier's motor)
+        if (P.LimitsEnabled) { const lo = ((P.LowerAngle ?? -45) * Math.PI) / 180, hi = ((P.UpperAngle ?? 45) * Math.PI) / 180; j.setLimits(Math.min(lo, hi), Math.max(lo, hi)); }
+        if (act === 'Motor') j.configureMotorVelocity(P.AngularVelocity ?? 0, gain(P.MotorMaxTorque ?? 0));
+        else if (act === 'Servo') {
+          // force based: a servo has to hold whatever hangs on it (a wheel scrubbing the ground)
+          const t = Math.min(P.ServoMaxTorque ?? 0, 1e9);
+          const k = t > 0 ? Math.min(SERVO_K, t * 2) : 2000;
+          j.configureMotorModel(RAPIER.MotorModel ? RAPIER.MotorModel.ForceBased : 1);
+          j.configureMotorPosition(((P.TargetAngle ?? 0) * Math.PI) / 180, k, k * SERVO_D);
+        } else j.configureMotorVelocity(0, 0);
+      } else if (c.ClassName === 'PrismaticConstraint' || c.ClassName === 'CylindricalConstraint') {
+        if (P.LimitsEnabled) { const lo = P.LowerLimit ?? -5, hi = P.UpperLimit ?? 5; j.setLimits(Math.min(lo, hi), Math.max(lo, hi)); }
+        if (act === 'Motor') j.configureMotorVelocity(P.Velocity ?? 0, gain(P.MotorMaxForce ?? 0));
+        else if (act === 'Servo') j.configureMotorPosition(P.TargetPosition ?? 0, 400, 40);
+        else j.configureMotorVelocity(0, 0);
+      }
+    } catch { /* joint type without motors */ }
   }
   syncConstraints() {
     for (const c of this.constraints) {
@@ -466,13 +557,10 @@ export class Physics {
       }
       if (!data) continue;
       const j = this.rw.createImpulseJoint(data, i0.asm.body, i1.asm.body, true);
-      if (c.ClassName === 'HingeConstraint' && c.props.ActuatorType) {
-        const t = c.props.ActuatorType.Name;
-        if (t === 'Motor') j.configureMotorVelocity?.(c.props.AngularVelocity ?? 0, (c.props.MotorMaxTorque ?? 1000) / 1000);
-        if (t === 'Servo') j.configureMotorPosition?.(((c.props.TargetAngle ?? 0) * Math.PI) / 180, c.props.ServoMaxTorque ?? 1000, 50);
-      }
-      if (c.ClassName === 'PrismaticConstraint' && c.props.LimitsEnabled) j.setLimits?.(c.props.LowerLimit ?? -5, c.props.UpperLimit ?? 5);
+      this.applyConstraintParams(c, j);
       this.constraintJoints.set(c, j);
+      this.jointBodies.set(c, [i0.asm, i1.asm]);
+      this.stiffenJoint(i0.asm, i1.asm);
     }
   }
 
@@ -601,6 +689,10 @@ export class Physics {
     if (this.terrainDirty) this.rebuildTerrain();
     this.flushDirty();
     if (this.constraintsDirty) { this.constraintsDirty = false; this.syncConstraints(); }
+    if (this.constraintParams.size) {
+      for (const c of this.constraintParams) { const j = this.constraintJoints.get(c); if (j) this.applyConstraintParams(c, j); }
+      this.constraintParams.clear();
+    }
     const g = this.ws.get('Gravity') ?? 196.2;
     this.rw.gravity = { x: 0, y: -g, z: 0 };
     for (const a of this.asms) if (a.offsetsDirty) this.refreshOffsets(a);
@@ -629,13 +721,13 @@ export class Physics {
         if (a.body.isSleeping()) continue;
         const cf = cfOfBody(a.body);
         a.rootCF = cf;
-        for (const p of a.parts) p.rawSet('CFrame', p === a.root ? cf : cf.mul(this.parts.get(p).offset), { physics: true });
+        for (const p of a.parts) { const info = this.parts.get(p); if (p === a.root) p.rawSet('CFrame', cf, { physics: true }); else if (info && info.asm === a) p.rawSet('CFrame', cf.mul(info.offset), { physics: true }); }
         if (cf.Y < fall && this.role === 'server') for (const p of [...a.parts]) if (!p.destroyed) p.destroy();
       } else if (a.kind === 'kinematic' && a.character) {
         const cf = cfOfBody(a.body);
         a.rootCF = cf;
         a.root.rawSet('CFrame', cf, { physics: true });
-        for (const p of a.parts) if (p !== a.root) p.rawSet('CFrame', cf.mul(this.parts.get(p).offset), { physics: true });
+        for (const p of a.parts) { if (p === a.root) continue; const info = this.parts.get(p); if (info && info.asm === a) p.rawSet('CFrame', cf.mul(info.offset), { physics: true }); }
       }
     }
   }

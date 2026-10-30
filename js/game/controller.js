@@ -224,7 +224,11 @@ export class CharacterController {
     if (hum.seat || hum.state === 'Dead') return;
     for (const p of asm.parts) {
       for (const other of physics.touchList.get(p) || []) {
-        if ((other.ClassName === 'Seat' || other.ClassName === 'VehicleSeat') && !other.occupant && other.props.Disabled !== true && other.dm) { this.sit(other); return; }
+        if ((other.ClassName === 'Seat' || other.ClassName === 'VehicleSeat') && !other.get('Occupant') && other.props.Disabled !== true && other.dm) {
+          // the server seats characters (it owns the SeatWeld); clients ask for it
+          if (this.world.hooks.sit) { this.seatCooldown = 1; this.world.hooks.sit(other, hum); } else this.sit(other);
+          return;
+        }
       }
     }
   }

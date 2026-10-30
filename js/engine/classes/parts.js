@@ -322,11 +322,11 @@ defineBehavior('MeshPart', {
 
 // ------------------------------------------------------------------ Seats
 defineBehavior('Seat', {
-  props: { Occupant: { get: (s) => s.occupant || null, readonly: true, type: 'Ref' } },
+  props: { Occupant: { get: (s) => s.occupant || s.props.Occupant || null, readonly: true, type: 'Ref' } },
   methods: methods({ Sit: (self, hum) => { self.world?.hooks.sit?.(self, hum); } }),
 });
 defineBehavior('VehicleSeat', {
-  props: { Occupant: { get: (s) => s.occupant || null, readonly: true, type: 'Ref' } },
+  props: { Occupant: { get: (s) => s.occupant || s.props.Occupant || null, readonly: true, type: 'Ref' } },
   methods: methods({ Sit: (self, hum) => { self.world?.hooks.sit?.(self, hum); } }),
 });
 

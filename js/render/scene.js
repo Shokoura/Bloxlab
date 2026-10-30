@@ -265,8 +265,10 @@ export class SceneView {
   buildMeshPart(part, size, color, matName, transparency) {
     const P = part.props;
     const holder = new THREE.Group();
-    const placeholder = new THREE.Mesh(boxGeometry(size.X, size.Y, size.Z), partMaterial(matName, color, Math.max(transparency, 0), 0));
+    // until (unless) the mesh arrives, a see-through box shows where it is without hiding the world
+    const placeholder = new THREE.Mesh(boxGeometry(size.X, size.Y, size.Z), partMaterial(matName, color, P.MeshId ? Math.max(transparency, 0.6) : transparency, 0));
     placeholder.userData.inst = part;
+    placeholder.castShadow = false;
     holder.add(placeholder);
     const id = P.MeshId;
     if (this.assets && id) {
@@ -319,33 +321,31 @@ export class SceneView {
     }
     let tr = P.Transparency || 0;
     tr = tr + (1 - tr) * ltm;
-    const mat = new THREE.MeshStandardMaterial({ color: srgb(P.Color3 || new Color3(1, 1, 1)), transparent: true, opacity: 1 - tr, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, roughness: 0.9 });
-    if (tr >= 0.999) return;
-    const m = new THREE.Mesh(geom, mat);
-    m.userData.ownGeometry = true; m.userData.ownMaterial = true;
-    m.userData.inst = part;
-    m.receiveShadow = true;
-    if (!head) {
-      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
-      m.quaternion.copy(q);
-      if (face === 4) m.rotateZ(Math.PI);
-      m.position.set(dir.x * (half[0] + 0.01), dir.y * (half[1] + 0.01), dir.z * (half[2] + 0.01));
-    } else { const off = sm.props.Offset; if (off) m.position.set(off.X, off.Y, off.Z); }
-    obj.add(m);
-    if (this.assets && P.Texture) {
-      this.assets.texture(P.Texture).then((t) => {
-        if (!t) return;
-        let tex = t;
-        if (d.ClassName === 'Texture') {
-          tex = t.clone();
-          tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-          tex.repeat.set(dims[0] / (P.StudsPerTileU || 2), dims[1] / (P.StudsPerTileV || 2));
-          tex.offset.set((P.OffsetStudsU || 0) / (P.StudsPerTileU || 2), (P.OffsetStudsV || 0) / (P.StudsPerTileV || 2));
-          tex.needsUpdate = true;
-        }
-        mat.map = tex; mat.needsUpdate = true;
-      }).catch(() => {});
-    }
+    // nothing is drawn until the image is available (places can have thousands of decals)
+    if (tr >= 0.999 || !P.Texture || !this.assets) { geom.dispose(); return; }
+    this.assets.texture(P.Texture).then((t) => {
+      if (!t || !obj.parent || this.objects.get(part)?.obj !== obj) { geom.dispose(); return; }
+      let tex = t;
+      if (d.ClassName === 'Texture') {
+        tex = t.clone();
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(dims[0] / (P.StudsPerTileU || 2), dims[1] / (P.StudsPerTileV || 2));
+        tex.offset.set((P.OffsetStudsU || 0) / (P.StudsPerTileU || 2), (P.OffsetStudsV || 0) / (P.StudsPerTileV || 2));
+        tex.needsUpdate = true;
+      }
+      const mat = new THREE.MeshStandardMaterial({ map: tex, color: srgb(P.Color3 || new Color3(1, 1, 1)), transparent: true, opacity: 1 - tr, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, roughness: 0.9 });
+      const m = new THREE.Mesh(geom, mat);
+      m.userData.ownGeometry = true; m.userData.ownMaterial = true;
+      m.userData.inst = part;
+      m.receiveShadow = true;
+      if (!head) {
+        const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+        m.quaternion.copy(q);
+        if (face === 4) m.rotateZ(Math.PI);
+        m.position.set(dir.x * (half[0] + 0.01), dir.y * (half[1] + 0.01), dir.z * (half[2] + 0.01));
+      } else { const off = sm.props.Offset; if (off) m.position.set(off.X, off.Y, off.Z); }
+      obj.add(m);
+    }).catch(() => geom.dispose());
   }
 
   addLight(obj, l) {
